@@ -5,7 +5,7 @@
   "description": "Self-hosted image and video generation workspace with a secure Docker Compose deployment.",
   "author": "BossKnew",
   "contributors": ["BossKnew"],
-  "license": "Apache-2.0",
+  "license": "MIT",
   "packageManager": "npm@11.16.0",
   "workspaces": ["apps/*"],
   "scripts": {

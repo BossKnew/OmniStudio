@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "description": "OmniStudio API and background worker.",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "dev": "node --watch -r ts-node/register src/main.ts",

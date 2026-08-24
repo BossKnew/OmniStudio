@@ -69,4 +69,4 @@ Never commit `.env`, secrets, database backups, or media files (ignored by defau
 
 ## 📄 License
 
-[Apache License 2.0](LICENSE)
+[MIT License](LICENSE)
