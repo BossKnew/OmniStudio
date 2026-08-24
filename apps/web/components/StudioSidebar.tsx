@@ -62,7 +62,7 @@ export default function StudioSidebar({
   }
 
   return <aside className="sidebar">
-    <h2 className="brand">KnewStudio</h2>
+    <h2 className="brand">OmniStudio</h2>
     <nav className="sidebar-nav" aria-label={t('工作区导航')}>
       <button className="button primary conversation" onClick={onNewCreation}><Icon name="plus" />{t('新创作')}</button>
       <button className={`button nav-button ${activeView === 'assets' ? 'active' : ''}`} onClick={onShowAssets}>

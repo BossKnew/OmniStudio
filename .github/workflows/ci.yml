@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      DATABASE_URL: postgresql://knewstudio:quality-only@localhost:5432/knewstudio
+      DATABASE_URL: postgresql://omnistudio:quality-only@localhost:5432/omnistudio
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -50,8 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      POSTGRES_DB: knewstudio
-      POSTGRES_USER: knewstudio
+      POSTGRES_DB: omnistudio
+      POSTGRES_USER: omnistudio
       POSTGRES_PASSWORD: CiPostgres-Password-2026!
       REDIS_PASSWORD: CiRedis-Password-2026!
       PROVIDER_SECRET_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=

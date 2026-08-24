@@ -1,5 +1,5 @@
 # Generic host Nginx example. Replace the hostname and certificate paths.
-# KnewStudio must use HTTP_BIND_ADDRESS=127.0.0.1 and
+# OmniStudio must use HTTP_BIND_ADDRESS=127.0.0.1 and
 # FORWARDED_HEADERS_MODE=trusted-single-proxy.
 
 server {
@@ -17,7 +17,7 @@ server {
   ssl_certificate /etc/letsencrypt/live/studio.example.com/fullchain.pem;
   ssl_certificate_key /etc/letsencrypt/live/studio.example.com/privkey.pem;
   ssl_protocols TLSv1.2 TLSv1.3;
-  ssl_session_cache shared:KnewStudioTLS:10m;
+  ssl_session_cache shared:OmniStudioTLS:10m;
   ssl_session_timeout 1d;
   ssl_session_tickets off;
 

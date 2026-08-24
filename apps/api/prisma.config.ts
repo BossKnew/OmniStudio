@@ -7,9 +7,9 @@ const configDirectory = dirname(fileURLToPath(import.meta.url));
 loadEnv({ path: resolve(configDirectory, '../../.env'), quiet: true });
 
 if (!process.env.DATABASE_URL && process.env.POSTGRES_PASSWORD) {
-  const user = encodeURIComponent(process.env.POSTGRES_USER || 'knewstudio');
+  const user = encodeURIComponent(process.env.POSTGRES_USER || 'omnistudio');
   const password = encodeURIComponent(process.env.POSTGRES_PASSWORD);
-  const database = encodeURIComponent(process.env.POSTGRES_DB || 'knewstudio');
+  const database = encodeURIComponent(process.env.POSTGRES_DB || 'omnistudio');
   process.env.DATABASE_URL = `postgresql://${user}:${password}@postgres:5432/${database}?connection_limit=5&pool_timeout=10`;
 }
 

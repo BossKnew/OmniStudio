@@ -1,5 +1,5 @@
 {
-  "name": "knewstudio",
+  "name": "omnistudio",
   "version": "0.2.0",
   "private": true,
   "description": "Self-hosted image and video generation workspace with a secure Docker Compose deployment.",
@@ -10,12 +10,12 @@
   "workspaces": ["apps/*"],
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "npm run build -w @knewstudio/api && npm run build -w @knewstudio/web",
-    "test": "npm run test -w @knewstudio/api && npm run test -w @knewstudio/web",
-    "lint": "npm run lint -w @knewstudio/api && npm run lint -w @knewstudio/web",
-    "db:generate": "npm run db:generate -w @knewstudio/api",
-    "db:migrate": "npm run db:migrate -w @knewstudio/api",
-    "assets:backfill-thumbnails": "npm run assets:backfill-thumbnails -w @knewstudio/api",
+    "build": "npm run build -w @omnistudio/api && npm run build -w @omnistudio/web",
+    "test": "npm run test -w @omnistudio/api && npm run test -w @omnistudio/web",
+    "lint": "npm run lint -w @omnistudio/api && npm run lint -w @omnistudio/web",
+    "db:generate": "npm run db:generate -w @omnistudio/api",
+    "db:migrate": "npm run db:migrate -w @omnistudio/api",
+    "assets:backfill-thumbnails": "npm run assets:backfill-thumbnails -w @omnistudio/api",
     "licenses:check": "node scripts/check-licenses.mjs",
     "security-configs:check": "node scripts/check-security-configs.mjs",
     "compose-security:check": "node scripts/run-compose-security.mjs"

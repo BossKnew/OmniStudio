@@ -1,8 +1,8 @@
 {
-  "name": "@knewstudio/api",
+  "name": "@omnistudio/api",
   "version": "0.2.0",
   "private": true,
-  "description": "KnewStudio API and background worker.",
+  "description": "OmniStudio API and background worker.",
   "license": "Apache-2.0",
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

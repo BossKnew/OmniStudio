@@ -54,7 +54,7 @@ export class MfaService {
     const user = await this.prisma.user.findUnique({ where: { id: challenge.userId }, select: { username: true } });
     if (!user) throw new UnauthorizedException('验证请求已失效');
     const secret = this.pendingSecret(challenge, digest);
-    const issuer = (process.env.MFA_ISSUER || 'KnewStudio').trim().slice(0, 64) || 'KnewStudio';
+    const issuer = (process.env.MFA_ISSUER || 'OmniStudio').trim().slice(0, 64) || 'OmniStudio';
     const uri = totpUri({ issuer, label: user.username, secret });
     return { qrDataUrl: await QRCode.toDataURL(uri, { width: 240, margin: 1, errorCorrectionLevel: 'M' }), manualKey: secret, issuer };
   }

@@ -48,15 +48,14 @@ export class MfaCryptoService {
     const payload = Buffer.from(payloadPart, 'base64url');
     if (iv.length !== 12 || tag.length !== 16 || !payload.length) throw new Error('MFA 密钥数据损坏');
     const decipher = createDecipheriv('aes-256-gcm', key, iv);
-    decipher.setAAD(this.aad(userId, purpose, version));
+    decipher.setAAD(this.aad(userId, purpose));
     decipher.setAuthTag(tag);
     return Buffer.concat([decipher.update(payload), decipher.final()]).toString('utf8');
   }
 
   needsRotation(value: string) { return !value.startsWith(`v2.${this.activeKeyId}.`); }
 
-  private aad(userId: string, purpose: string, version = 'v2') {
-    const namespace = version === 'v1' ? ['kv', 'studio'].join('') : 'knewstudio';
-    return Buffer.from(`${namespace}:mfa:${purpose}:${userId}`, 'utf8');
+  private aad(userId: string, purpose: string) {
+    return Buffer.from(`omnistudio:mfa:${purpose}:${userId}`, 'utf8');
   }
 }

@@ -100,7 +100,7 @@ describe('streamed provider image parsing', () => {
   let root: string;
   let storage: StorageService;
   beforeEach(async () => {
-    root = await mkdtemp(join(tmpdir(), 'knewstudio-provider-'));
+    root = await mkdtemp(join(tmpdir(), 'omnistudio-provider-'));
     process.env.MEDIA_ROOT = root;
     storage = new StorageService();
   });
@@ -174,7 +174,7 @@ describe('streamed provider image parsing', () => {
 
 describe('GenerationProcessor mask lifecycle', () => {
   let root: string;
-  beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'knewstudio-generation-')); process.env.MEDIA_ROOT = root; });
+  beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'omnistudio-generation-')); process.env.MEDIA_ROOT = root; });
   afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
   it('deletes the retained mask only after an inpaint job succeeds', async () => {

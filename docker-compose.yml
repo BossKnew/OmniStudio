@@ -1,4 +1,4 @@
-name: knewstudio
+name: omnistudio
 
 x-app-hardening: &app-hardening
   read_only: true
@@ -30,8 +30,8 @@ services:
       - -c
       - max_wal_size=${POSTGRES_MAX_WAL_SIZE:-512MB}
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-knewstudio}
-      POSTGRES_USER: ${POSTGRES_USER:-knewstudio}
+      POSTGRES_DB: ${POSTGRES_DB:-omnistudio}
+      POSTGRES_USER: ${POSTGRES_USER:-omnistudio}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes: [postgres_data:/var/lib/postgresql/data]
     networks: [data]
@@ -71,8 +71,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-}
       DATABASE_URL_FILE: ${DATABASE_URL_FILE:-}
-      POSTGRES_DB: ${POSTGRES_DB:-knewstudio}
-      POSTGRES_USER: ${POSTGRES_USER:-knewstudio}
+      POSTGRES_DB: ${POSTGRES_DB:-omnistudio}
+      POSTGRES_USER: ${POSTGRES_USER:-omnistudio}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     depends_on:
       postgres: { condition: service_healthy, required: false }
@@ -86,8 +86,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-}
       DATABASE_URL_FILE: ${DATABASE_URL_FILE:-}
-      POSTGRES_DB: ${POSTGRES_DB:-knewstudio}
-      POSTGRES_USER: ${POSTGRES_USER:-knewstudio}
+      POSTGRES_DB: ${POSTGRES_DB:-omnistudio}
+      POSTGRES_USER: ${POSTGRES_USER:-omnistudio}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       REDIS_URL: ${REDIS_URL:-}
       REDIS_URL_FILE: ${REDIS_URL_FILE:-}
@@ -102,7 +102,7 @@ services:
       MFA_SECRET_KEYS_FILE: ${MFA_SECRET_KEYS_FILE:-}
       MFA_SECRET_ACTIVE_KID: ${MFA_SECRET_ACTIVE_KID:-}
       MFA_SECRET_ACTIVE_KID_FILE: ${MFA_SECRET_ACTIVE_KID_FILE:-}
-      MFA_ISSUER: ${MFA_ISSUER:-KnewStudio}
+      MFA_ISSUER: ${MFA_ISSUER:-OmniStudio}
       MEDIA_ROOT: /data/media
       APP_ORIGINS: ${APP_ORIGINS:-}
       ALLOW_INSECURE_HTTP: ${ALLOW_INSECURE_HTTP:-false}

@@ -65,7 +65,7 @@ describe('validateSecurityConfig', () => {
     expect(() => validateSecurityConfig()).not.toThrow();
   });
 
-  it.each(['http://192.168.1.20:8080', 'http://10.0.0.8', 'http://[fd00::20]:8080', 'http://knewstudio.local:8080'])('allows explicitly enabled private-network HTTP: %s', (origin) => {
+  it.each(['http://192.168.1.20:8080', 'http://10.0.0.8', 'http://[fd00::20]:8080', 'http://omnistudio.local:8080'])('allows explicitly enabled private-network HTTP: %s', (origin) => {
     process.env.NODE_ENV = 'production';
     process.env.APP_ORIGINS = origin;
     process.env.ALLOW_INSECURE_HTTP = 'true';

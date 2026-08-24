@@ -1,8 +1,8 @@
-# 🎨 KnewStudio
+# 🎨 OmniStudio
 
 English | [简体中文](README_zh.md)
 
-KnewStudio is a self-hosted image and video generation workspace for teams: text-to-image, full-image editing, masked inpainting, text-to-video, and image-to-video, with a built-in asset library, quota management, user groups, and model access control.
+OmniStudio is a self-hosted image and video generation workspace for teams: text-to-image, full-image editing, masked inpainting, text-to-video, and image-to-video, with a built-in asset library, quota management, user groups, and model access control.
 
 ## ✨ Features
 

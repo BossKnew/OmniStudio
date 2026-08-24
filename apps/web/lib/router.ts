@@ -1,6 +1,6 @@
 import { useMemo, useSyncExternalStore } from 'react';
 
-const NAVIGATION_EVENT = 'knewstudio:navigate';
+const NAVIGATION_EVENT = 'omnistudio:navigate';
 
 function subscribe(listener: () => void) {
   window.addEventListener('popstate', listener);

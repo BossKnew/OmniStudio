@@ -1,4 +1,4 @@
-## KnewStudio v0.2.2
+## OmniStudio v0.2.2
 
 v0.2.2 adds image-edit support to prompt polishing and extends the polishing setup to multiple providers.
 
@@ -9,4 +9,4 @@ v0.2.2 adds image-edit support to prompt polishing and extends the polishing set
 
 This release includes database changes (new `supportsImageEdit` and `name` columns); they are applied automatically when the stack starts with `docker compose up -d --build`. Deployment otherwise unchanged.
 
-**Full Changelog:** https://github.com/BossKnew/KnewStudio/compare/v0.2.1...v0.2.2
+**Full Changelog:** https://github.com/BossKnew/OmniStudio/compare/v0.2.1...v0.2.2

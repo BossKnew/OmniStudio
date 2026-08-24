@@ -7,7 +7,7 @@ import { StorageService, videoInfoFromFfprobe } from './storage.service';
 
 describe('StorageService', () => {
   let root: string;
-  beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'knewstudio-')); process.env.MEDIA_ROOT = root; });
+  beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'omnistudio-')); process.env.MEDIA_ROOT = root; });
   afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
   it('validates, saves and reads a private image', async () => {

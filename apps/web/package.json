@@ -1,8 +1,8 @@
 {
-  "name": "@knewstudio/web",
+  "name": "@omnistudio/web",
   "version": "0.2.0",
   "private": true,
-  "description": "KnewStudio web client.",
+  "description": "OmniStudio web client.",
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {

@@ -25,7 +25,7 @@ describe('RFC 6238 TOTP', () => {
   it('generates a 160-bit Base32 secret and a compatible URI', () => {
     const secret = generateTotpSecret();
     expect(secret).toMatch(/^[A-Z2-7]{32}$/);
-    const uri = new URL(totpUri({ issuer: 'KnewStudio', label: 'admin', secret }));
+    const uri = new URL(totpUri({ issuer: 'OmniStudio', label: 'admin', secret }));
     expect(uri.protocol).toBe('otpauth:');
     expect(uri.searchParams.get('secret')).toBe(secret);
     expect(uri.searchParams.get('period')).toBe('30');

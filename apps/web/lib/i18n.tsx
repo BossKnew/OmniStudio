@@ -248,7 +248,7 @@ const english: Record<string, string> = {
   '保存恢复码': 'Save recovery codes',
   '手机不可用时可用其中一条登录。每条只能使用一次，关闭此页面后不会再次显示。': 'Use one to log in if your phone is unavailable. Each code works once and will not be shown again after closing this page.',
   '管理你的管理员账号安全选项。': 'Manage your administrator account security options.',
-  '管理 KnewStudio 的访问权限与图片生成能力。': 'Manage KnewStudio access and image-generation capabilities.',
+  '管理 OmniStudio 的访问权限与图片生成能力。': 'Manage OmniStudio access and image-generation capabilities.',
   '配置用于文生图提示词润色的大语言模型。': 'Configure the language model used to polish text-to-image prompts.',
   '用户管理': 'User management',
   '用户组': 'User groups',
@@ -527,7 +527,7 @@ const english: Record<string, string> = {
   '秒': ' sec',
   '视频秒数': 'Video seconds',
   '查看各用户在选定 UTC 日期范围内消耗的图片张数和视频秒数。重试会计入。': 'See how many images and video seconds each user consumed in the selected UTC range. Retries are included.',
-  '管理 KnewStudio 的访问权限、图片与视频生成能力。': 'Manage KnewStudio access and image and video generation.',
+  '管理 OmniStudio 的访问权限、图片与视频生成能力。': 'Manage OmniStudio access and image and video generation.',
   '配置用于文生图、图片编辑和文生视频提示词润色的大语言模型。': 'Configure the language model used to polish text-to-image, image-edit, and text-to-video prompts.',
   '设置尺寸、比例、质量和时长在工作台中文/英文界面的显示名称。': 'Set the Chinese and English labels shown for size, aspect ratio, quality, and duration in the studio.',
   'OpenAI Images': 'OpenAI Images',
@@ -552,7 +552,7 @@ const english: Record<string, string> = {
   '会话不存在': 'Conversation not found',
 };
 
-const LOCALE_COOKIE = 'knewstudio.locale';
+const LOCALE_COOKIE = 'omnistudio.locale';
 
 export function getCookieLocale(): Locale | null {
   if (typeof document === 'undefined') return null;

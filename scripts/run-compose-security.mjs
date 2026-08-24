@@ -20,7 +20,7 @@ function composeJson(args) {
 }
 
 function check(json, mode) {
-  const dir = mkdtempSync(join(tmpdir(), 'knewstudio-compose-'));
+  const dir = mkdtempSync(join(tmpdir(), 'omnistudio-compose-'));
   const path = join(dir, `${mode}.json`);
   try {
     writeFileSync(path, json);

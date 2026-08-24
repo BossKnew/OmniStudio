@@ -4,8 +4,8 @@ const npmExecPath = process.env.npm_execpath;
 const npmCommand = npmExecPath ? process.execPath : (process.platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : 'npm');
 const npmPrefix = npmExecPath ? [npmExecPath] : (process.platform === 'win32' ? ['/d', '/s', '/c', 'npm'] : []);
 const commands = [
-  ['run', 'dev', '-w', '@knewstudio/api'],
-  ['run', 'dev', '-w', '@knewstudio/web'],
+  ['run', 'dev', '-w', '@omnistudio/api'],
+  ['run', 'dev', '-w', '@omnistudio/web'],
 ];
 const children = commands.map((args) => spawn(npmCommand, [...npmPrefix, ...args], { stdio: 'inherit' }));
 let stopping = false;

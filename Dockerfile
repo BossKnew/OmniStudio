@@ -6,7 +6,7 @@ COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 RUN npm ci
 COPY . .
-RUN DATABASE_URL=postgresql://knewstudio:build-only@localhost:5432/knewstudio npm run db:generate && npm run build
+RUN DATABASE_URL=postgresql://omnistudio:build-only@localhost:5432/omnistudio npm run db:generate && npm run build
 
 FROM node:24.19.0-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS api-deps
 WORKDIR /app
@@ -14,11 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
-RUN npm ci --omit=dev --workspace @knewstudio/api --include-workspace-root && npm cache clean --force
+RUN npm ci --omit=dev --workspace @omnistudio/api --include-workspace-root && npm cache clean --force
 
 FROM api-deps AS api-runtime-deps
-RUN npm pkg delete dependencies.prisma devDependencies.typescript --workspace @knewstudio/api \
-    && npm prune --omit=dev --omit=peer --workspace @knewstudio/api --include-workspace-root \
+RUN npm pkg delete dependencies.prisma devDependencies.typescript --workspace @omnistudio/api \
+    && npm prune --omit=dev --omit=peer --workspace @omnistudio/api --include-workspace-root \
     && rm -rf node_modules/prisma node_modules/@prisma/engines node_modules/typescript node_modules/esbuild node_modules/@esbuild \
     && npm cache clean --force \
     && rm -rf /usr/local/lib/node_modules/npm \

@@ -1,4 +1,4 @@
-# Optional standalone Traefik. KnewStudio joins the external `proxy` network
+# Optional standalone Traefik. OmniStudio joins the external `proxy` network
 # through compose.traefik.yml. Only the restricted Socket Proxy can access the
 # Docker socket; Traefik itself never receives the host socket.
 services:

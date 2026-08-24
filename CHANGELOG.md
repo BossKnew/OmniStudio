@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to KnewStudio are documented here.
+All notable changes to OmniStudio are documented here.
 
 ## [0.2.2] - 2026-08-22
 

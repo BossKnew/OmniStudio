@@ -97,7 +97,7 @@ describe('SafeHttpService SSRF policy', () => {
 describe('SafeHttpService bounded file streaming', () => {
   let root: string;
   const service = new SafeHttpService();
-  beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'knewstudio-http-')); });
+  beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'omnistudio-http-')); });
   afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
   function response(body: Buffer) {

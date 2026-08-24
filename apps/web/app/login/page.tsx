@@ -65,7 +65,7 @@ export default function LoginPage() {
   }
 
   return <main className="auth-page"><div className="auth-language"><LanguageSwitcher /></div><section className="auth-box card stack">
-    <h1>KnewStudio</h1>
+    <h1>OmniStudio</h1>
     {step === 'credentials' && <>
       <p className="muted">{registerMode ? t('注册后需要管理员激活') : t('登录 AI 媒体工作台')}</p>
       <form className="stack" onSubmit={submitCredentials}>
