@@ -6,14 +6,14 @@ OmniStudio is a self-hosted image and video generation workspace for teams: text
 
 ## ✨ Features
 
-- 🎨 **Generation**: text-to-image, reference-image editing, masked inpainting, text-to-video, image-to-video
-- 🔌 **Providers**: OpenAI Images-compatible APIs; OpenAI Videos, Seedance (Volcengine Ark), and Wan (DashScope) video adapters — gateways speaking the OpenAI Videos protocol can reuse that adapter
-- 🖥️ **Studio**: image/video mode switching, history, regenerate, retry, download, references, and mask drawing
-- 🗂️ **Assets**: conversations, asset library, group-shared references, thumbnails, storage quotas
-- 👥 **Administration**: user approval, user groups, model access control, per-group generation quotas (images counted in images, video in seconds)
-- ✍️ **Prompt polishing**: text-to-image, image-edit, and text-to-video, with multiple configurable providers
-- 🛡️ **Security**: mandatory admin MFA, encrypted API keys and MFA secrets, SSRF protection, rate limiting, CSRF protection
-- 🌐 **UI**: Chinese and English
+- **Generation**: text-to-image, reference-image editing, masked inpainting, text-to-video, image-to-video
+- **Providers**: OpenAI Images-compatible APIs; OpenAI Videos, Seedance (Volcengine Ark), and Wan (DashScope) video adapters — gateways speaking the OpenAI Videos protocol can reuse that adapter
+- **Studio**: image/video mode switching, history, regenerate, retry, download, references, and mask drawing
+- **Assets**: conversations, asset library, group-shared references, thumbnails, storage quotas
+- **Administration**: user approval, user groups, model access control, per-group generation quotas (images counted in images, video in seconds)
+- **Prompt polishing**: text-to-image, image-edit, and text-to-video, with multiple configurable providers
+- **Security**: mandatory admin MFA, encrypted API keys and MFA secrets, SSRF protection, rate limiting, CSRF protection
+- **UI**: Chinese and English
 
 ## 🧰 Technology Stack
 
@@ -45,11 +45,11 @@ Open <http://localhost:8080>. The first login uses the bootstrap admin account f
 
 ## Production Deployment
 
-- 🔐 Use HTTPS: set `APP_ORIGINS` to the exact origin and `ALLOW_INSECURE_HTTP=false`
-- 🔑 Use separate, strong database, Redis, encryption, and admin passwords
-- 💾 Back up PostgreSQL data and the media volume regularly
-- 🧩 Optional overlays: Traefik (`compose.traefik.yml`), external database/Redis (`compose.external.yml`), Compose secrets (`compose.secrets.yml`)
-- 📁 Reverse proxy examples in the [`deploy`](deploy) directory
+- Use HTTPS: set `APP_ORIGINS` to the exact origin and `ALLOW_INSECURE_HTTP=false`
+- Use separate, strong database, Redis, encryption, and admin passwords
+- Back up PostgreSQL data and the media volume regularly
+- Optional overlays: Traefik (`compose.traefik.yml`), external database/Redis (`compose.external.yml`), Compose secrets (`compose.secrets.yml`)
+- Reverse proxy examples in the [`deploy`](deploy) directory
 
 ## Local Development
 

@@ -6,14 +6,14 @@ OmniStudio 是一个面向团队的自托管图片与视频生成工作台：文
 
 ## ✨ 功能
 
-- 🎨 **生成**：文生图、参考图编辑、蒙版局部重绘、文生视频、图生视频
-- 🔌 **供应商**：OpenAI Images 兼容接口；OpenAI Videos、Seedance（火山方舟）、Wan（通义万相）视频适配器，兼容 OpenAI Videos 协议的网关可直接复用
-- 🖥️ **工作台**：图片/视频模式切换，历史记录、重新生成、重试、下载、参考图与遮罩绘制
-- 🗂️ **素材**：会话、素材库、组内分享参考图、缩略图、存储配额
-- 👥 **管理**：用户审批、用户组、模型访问控制、组级生成额度（图片按张、视频按秒）
-- ✍️ **提示词润色**：支持文生图、图片编辑、文生视频，可配置多家供应商
-- 🛡️ **安全**：管理员强制 MFA、API Key 与 MFA 密钥加密存储、SSRF 防护、速率限制、CSRF 防护
-- 🌐 **界面**：中文、英文
+- **生成**：文生图、参考图编辑、蒙版局部重绘、文生视频、图生视频
+- **供应商**：OpenAI Images 兼容接口；OpenAI Videos、Seedance（火山方舟）、Wan（通义万相）视频适配器，兼容 OpenAI Videos 协议的网关可直接复用
+- **工作台**：图片/视频模式切换，历史记录、重新生成、重试、下载、参考图与遮罩绘制
+- **素材**：会话、素材库、组内分享参考图、缩略图、存储配额
+- **管理**：用户审批、用户组、模型访问控制、组级生成额度（图片按张、视频按秒）
+- **提示词润色**：支持文生图、图片编辑、文生视频，可配置多家供应商
+- **安全**：管理员强制 MFA、API Key 与 MFA 密钥加密存储、SSRF 防护、速率限制、CSRF 防护
+- **界面**：中文、英文
 
 ## 🧰 技术栈
 
@@ -45,11 +45,11 @@ docker compose up -d --build
 
 ## 生产部署
 
-- 🔐 使用 HTTPS：设置 `APP_ORIGINS` 为准确的 Origin，并设 `ALLOW_INSECURE_HTTP=false`
-- 🔑 使用独立的高强度数据库、Redis、加密密钥与管理员密码
-- 💾 定期备份 PostgreSQL 数据与媒体卷
-- 🧩 可选叠加：Traefik（`compose.traefik.yml`）、外部数据库/Redis（`compose.external.yml`）、Compose secrets（`compose.secrets.yml`）
-- 📁 反向代理示例见 [`deploy`](deploy) 目录
+- 使用 HTTPS：设置 `APP_ORIGINS` 为准确的 Origin，并设 `ALLOW_INSECURE_HTTP=false`
+- 使用独立的高强度数据库、Redis、加密密钥与管理员密码
+- 定期备份 PostgreSQL 数据与媒体卷
+- 可选叠加：Traefik（`compose.traefik.yml`）、外部数据库/Redis（`compose.external.yml`）、Compose secrets（`compose.secrets.yml`）
+- 反向代理示例见 [`deploy`](deploy) 目录
 
 ## 本地开发
 
