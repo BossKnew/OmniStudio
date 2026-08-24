@@ -19,7 +19,7 @@ OmniStudio 是一个面向团队的自托管图片与视频生成工作台：文
 
 Web（React 19、Vite、TypeScript）· API（NestJS、Prisma、PostgreSQL、Redis、BullMQ）· 部署（Docker Compose、Nginx）
 
-## 快速开始
+## ⚡ 快速开始
 
 环境要求：Docker Engine 与 Compose v2.24+、OpenSSL；建议至少 2 CPU / 4 GiB 内存。
 
@@ -43,7 +43,7 @@ docker compose up -d --build
 
 访问 <http://localhost:8080>。首次登录使用 `.env` 中的引导管理员账号，系统会要求修改密码并绑定 MFA。
 
-## 生产部署
+## 🚢 生产部署
 
 - 使用 HTTPS：设置 `APP_ORIGINS` 为准确的 Origin，并设 `ALLOW_INSECURE_HTTP=false`
 - 使用独立的高强度数据库、Redis、加密密钥与管理员密码
@@ -51,7 +51,7 @@ docker compose up -d --build
 - 可选叠加：Traefik（`compose.traefik.yml`）、外部数据库/Redis（`compose.external.yml`）、Compose secrets（`compose.secrets.yml`）
 - 反向代理示例见 [`deploy`](deploy) 目录
 
-## 本地开发
+## 🛠️ 本地开发
 
 环境要求：Node.js 24、npm 11、PostgreSQL、Redis、`ffmpeg`。
 
@@ -63,10 +63,10 @@ npm run dev
 
 开发服务器：Web <http://localhost:5173>，API <http://localhost:4000>（Vite 将 `/api` 代理到本地 API）。
 
-## 安全
+## 🔒 安全
 
 不要提交 `.env`、密钥、数据库备份或媒体文件（默认已忽略）。漏洞请按 [`SECURITY.md`](SECURITY.md) 私下报告。
 
-## 许可证
+## 📄 许可证
 
 [Apache License 2.0](LICENSE)

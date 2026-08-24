@@ -19,7 +19,7 @@ OmniStudio is a self-hosted image and video generation workspace for teams: text
 
 Web (React 19, Vite, TypeScript) · API (NestJS, Prisma, PostgreSQL, Redis, BullMQ) · Deployment (Docker Compose, Nginx)
 
-## Quick Start
+## ⚡ Quick Start
 
 Requirements: Docker Engine and Compose v2.24+, OpenSSL; at least 2 CPUs / 4 GiB of memory recommended.
 
@@ -43,7 +43,7 @@ docker compose up -d --build
 
 Open <http://localhost:8080>. The first login uses the bootstrap admin account from `.env`; you will be asked to change the password and set up MFA.
 
-## Production Deployment
+## 🚢 Production Deployment
 
 - Use HTTPS: set `APP_ORIGINS` to the exact origin and `ALLOW_INSECURE_HTTP=false`
 - Use separate, strong database, Redis, encryption, and admin passwords
@@ -51,7 +51,7 @@ Open <http://localhost:8080>. The first login uses the bootstrap admin account f
 - Optional overlays: Traefik (`compose.traefik.yml`), external database/Redis (`compose.external.yml`), Compose secrets (`compose.secrets.yml`)
 - Reverse proxy examples in the [`deploy`](deploy) directory
 
-## Local Development
+## 🛠️ Local Development
 
 Requirements: Node.js 24, npm 11, PostgreSQL, Redis, and `ffmpeg`.
 
@@ -63,10 +63,10 @@ npm run dev
 
 Dev servers: Web <http://localhost:5173>, API <http://localhost:4000> (Vite proxies `/api` to the local API).
 
-## Security
+## 🔒 Security
 
 Never commit `.env`, secrets, database backups, or media files (ignored by default). Report vulnerabilities privately per [`SECURITY.md`](SECURITY.md).
 
-## License
+## 📄 License
 
 [Apache License 2.0](LICENSE)
