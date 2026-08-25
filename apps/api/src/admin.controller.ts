@@ -6,7 +6,7 @@ import { assertPassword, CurrentUser, Roles, type AuthUser } from './common';
 import { PrismaService } from './prisma.service';
 import { StorageService } from './storage.service';
 import { parseBody, passwordSchema, safeText, uuidSchema } from './validation';
-import { parseQuotaPair, parseVideoQuotaPair } from './generation-quota';
+import { parseQuotaPair } from './generation-quota';
 import { z } from 'zod';
 import { hashPassword } from './password-hash';
 import { AuthContextService } from './auth-context.service';
@@ -23,9 +23,7 @@ const userGroupSchema = z.object({
   name: safeText(64),
   description: safeText(300).optional().nullable(),
   quotaWindow: z.string().max(4).nullable().optional(),
-  quotaImages: z.number().int().min(1).max(1_000_000).nullable().optional(),
-  videoQuotaWindow: z.string().max(4).nullable().optional(),
-  quotaVideoSeconds: z.number().int().min(1).max(1_000_000).nullable().optional(),
+  quotaPoints: z.number().int().min(1).max(1_000_000).nullable().optional(),
 }).strict();
 const userGroupsAssignmentSchema = z.object({ groupIds: z.array(uuidSchema).max(100) }).strict();
 
@@ -99,12 +97,9 @@ export class AdminController {
     const name = body.name.trim();
     if (await this.prisma.userGroup.findUnique({ where: { name }, select: { id: true } })) throw new ConflictException('用户组名称已存在');
     let quota;
-    try { quota = parseQuotaPair(body.quotaWindow ?? null, body.quotaImages ?? null); }
+    try { quota = parseQuotaPair(body.quotaWindow ?? null, body.quotaPoints ?? null); }
     catch (error) { throw new BadRequestException((error as Error).message); }
-    let videoQuota;
-    try { videoQuota = parseVideoQuotaPair(body.videoQuotaWindow ?? null, body.quotaVideoSeconds ?? null); }
-    catch (error) { throw new BadRequestException((error as Error).message); }
-    const group = await this.prisma.userGroup.create({ data: { name, description: body.description?.trim() || null, ...quota, ...videoQuota } });
+    const group = await this.prisma.userGroup.create({ data: { name, description: body.description?.trim() || null, ...quota } });
     await this.prisma.auditLog.create({ data: { actorId: actor.id, action: 'user-group.created', targetType: 'user-group', targetId: group.id, metadata: { name } } });
     return group;
   }
@@ -115,16 +110,11 @@ export class AdminController {
     const name = body.name?.trim();
     if (name && await this.prisma.userGroup.findFirst({ where: { name, id: { not: id } }, select: { id: true } })) throw new ConflictException('用户组名称已存在');
     let quota = {};
-    if (body.quotaWindow !== undefined || body.quotaImages !== undefined) {
-      try { quota = parseQuotaPair(body.quotaWindow ?? null, body.quotaImages ?? null); }
+    if (body.quotaWindow !== undefined || body.quotaPoints !== undefined) {
+      try { quota = parseQuotaPair(body.quotaWindow ?? null, body.quotaPoints ?? null); }
       catch (error) { throw new BadRequestException((error as Error).message); }
     }
-    let videoQuota = {};
-    if (body.videoQuotaWindow !== undefined || body.quotaVideoSeconds !== undefined) {
-      try { videoQuota = parseVideoQuotaPair(body.videoQuotaWindow ?? null, body.quotaVideoSeconds ?? null); }
-      catch (error) { throw new BadRequestException((error as Error).message); }
-    }
-    const group = await this.prisma.userGroup.update({ where: { id }, data: { ...(name ? { name } : {}), ...(body.description !== undefined ? { description: body.description?.trim() || null } : {}), ...quota, ...videoQuota } });
+    const group = await this.prisma.userGroup.update({ where: { id }, data: { ...(name ? { name } : {}), ...(body.description !== undefined ? { description: body.description?.trim() || null } : {}), ...quota } });
     await this.prisma.auditLog.create({ data: { actorId: actor.id, action: 'user-group.updated', targetType: 'user-group', targetId: id } });
     return group;
   }
@@ -216,7 +206,7 @@ export class AdminController {
     const rows = await this.prisma.quotaEvent.groupBy({
       by: ['userId'],
       where: { createdAt: { gte: from, lt: to } },
-      _sum: { imageCount: true, videoSeconds: true },
+      _sum: { imageCount: true, videoSeconds: true, points: true },
       _count: { _all: true },
     });
     const users = rows.length ? await this.prisma.user.findMany({
@@ -234,9 +224,10 @@ export class AdminController {
           displayName: byId.get(row.userId)?.displayName ?? byId.get(row.userId)?.username ?? '',
           imageCount: row._sum.imageCount ?? 0,
           videoSeconds: row._sum.videoSeconds ?? 0,
+          points: row._sum.points ?? 0,
           events: row._count._all,
         }))
-        .sort((left, right) => right.imageCount - left.imageCount || left.username.localeCompare(right.username)),
+        .sort((left, right) => right.points - left.points || right.imageCount - left.imageCount || left.username.localeCompare(right.username)),
     };
   }
 

@@ -13,19 +13,44 @@ import Icon, { type IconName } from '@/components/Icon';
 type AdminView = 'users' | 'groups' | 'usage' | 'providers' | 'models' | 'labels' | 'prompt-polish' | 'security';
 type AdapterKind = 'openai-images' | 'openai-videos' | 'seedance' | 'wan';
 type Provider = { id: string; name: string; baseUrl: string; adapterKind?: AdapterKind; timeoutSeconds: number; pollTimeoutSeconds?: number; enabled: boolean; testCooldownUntil: string | null; lastTestOk: boolean | null };
-type UserGroup = { id: string; name: string; description: string | null; quotaWindow: string | null; quotaImages: number | null; videoQuotaWindow?: string | null; quotaVideoSeconds?: number | null; _count: { users: number; models: number; assetShares?: number } };
-type AdminModel = { id: string; providerId: string; displayName: string; upstreamModelId: string; mediaKind?: 'IMAGE' | 'VIDEO'; allowedSizes: string[]; allowedQualities: string[]; allowedDurations?: number[]; supportsEdit: boolean; supportsInpaint: boolean; maxImages: number; maxInputImages: number; enabled: boolean; provider: { id: string; name: string; adapterKind?: AdapterKind }; allowedGroups: Array<{ groupId: string; group: { id: string; name: string } }> };
+type UserGroup = { id: string; name: string; description: string | null; quotaWindow: string | null; quotaPoints?: number | null; _count: { users: number; models: number; assetShares?: number } };
+type AdminModel = { id: string; providerId: string; displayName: string; upstreamModelId: string; mediaKind?: 'IMAGE' | 'VIDEO'; allowedSizes: string[]; resolutionTiers?: Array<{ label: string; shortEdge: number }>; allowedRatios?: string[]; allowedQualities: string[]; allowedDurations?: number[]; supportsEdit: boolean; supportsInpaint: boolean; maxImages: number; maxInputImages: number; costPerUnit: number; pointMultipliers?: Record<string, number> | null; enabled: boolean; provider: { id: string; name: string; adapterKind?: AdapterKind }; allowedGroups: Array<{ groupId: string; group: { id: string; name: string } }> };
 type ProviderForm = { name: string; baseUrl: string; apiKey: string; adapterKind: AdapterKind; timeoutSeconds: number; pollTimeoutSeconds: number };
-type ModelForm = { providerId: string; displayName: string; upstreamModelId: string; allowedSizes: string; allowedQualities: string; allowedDurations: string; supportsEdit: boolean; supportsInpaint: boolean; maxImages: number; maxInputImages: number; allowedGroupIds: string[] };
-type GroupForm = { name: string; description: string; quotaWindow: string; quotaImages: string; videoQuotaWindow: string; quotaVideoSeconds: string };
-type UsageRow = { userId: string; username: string; displayName: string; imageCount: number; videoSeconds?: number; events: number };
+type ModelForm = { providerId: string; displayName: string; upstreamModelId: string; allowedSizes: string; tierRows: TierRowInput[]; allowedRatios: string; allowedQualities: string; allowedDurations: string; supportsEdit: boolean; supportsInpaint: boolean; maxImages: number; maxInputImages: number; costPerUnit: string;  allowedGroupIds: string[] };
+type ResolutionTierInput = { label: string; shortEdge: number };
+
+type TierRowInput = { label: string; shortEdge: string; multiplier: string };
+
+function zipTierRows(rows: TierRowInput[]): Array<ResolutionTierInput & { multiplier: string }> {
+  const result: Array<ResolutionTierInput & { multiplier: string }> = [];
+  const seen = new Set<number>();
+  rows.forEach((row) => {
+    const label = row.label.trim();
+    const shortEdge = Number(row.shortEdge.trim());
+    if (!label || !Number.isInteger(shortEdge) || shortEdge < 64 || shortEdge > 8192 || seen.has(shortEdge)) return;
+    seen.add(shortEdge);
+    result.push({ label, shortEdge, multiplier: row.multiplier.trim() });
+  });
+  return result;
+}
+type GroupForm = { name: string; description: string; quotaWindow: string; quotaPoints: string };
+type UsageRow = { userId: string; username: string; displayName: string; imageCount: number; videoSeconds?: number; points: number; events: number };
 type Notice = { kind: 'success' | 'error'; message: string };
 type AdminUser = { id: string; username: string; displayName: string; role: 'USER' | 'ADMIN'; status: string; groups: Array<{ id: string; name: string }>; mfaEnabled: boolean; mfaRequired: boolean; _count: { jobs: number; conversations: number; assets: number }; storageBytes: string };
 type AdminSettings = { registrationEnabled: boolean; userSessionDuration?: string };
 
 const emptyProviderForm = (): ProviderForm => ({ name: '', baseUrl: '', apiKey: '', adapterKind: 'openai-images', timeoutSeconds: 180, pollTimeoutSeconds: 900 });
-const emptyModelForm = (): ModelForm => ({ providerId: '', displayName: '', upstreamModelId: '', allowedSizes: '', allowedQualities: 'auto,low,medium,high', allowedDurations: '5,10', supportsEdit: false, supportsInpaint: false, maxImages: 1, maxInputImages: 1, allowedGroupIds: [] });
-const emptyGroupForm = (): GroupForm => ({ name: '', description: '', quotaWindow: '', quotaImages: '', videoQuotaWindow: '', quotaVideoSeconds: '' });
+const emptyModelForm = (): ModelForm => ({ providerId: '', displayName: '', upstreamModelId: '', allowedSizes: '', tierRows: DEFAULT_TIER_ROWS.map((row) => ({ ...row })), allowedRatios: DEFAULT_RATIOS_TEXT, allowedQualities: 'auto,low,medium,high', allowedDurations: '5,10', supportsEdit: false, supportsInpaint: false, maxImages: 1, maxInputImages: 1, costPerUnit: '1', allowedGroupIds: [] });
+
+const DEFAULT_TIER_ROWS: TierRowInput[] = [{ label: '1K', shortEdge: '1024', multiplier: '1' }];
+const DEFAULT_VIDEO_TIER_ROWS: TierRowInput[] = [{ label: '720P', shortEdge: '720', multiplier: '1' }];
+const FULL_DEFAULT_TIER_ROWS: TierRowInput[] = [
+  { label: '1K', shortEdge: '1024', multiplier: '1' },
+  { label: '2K', shortEdge: '1440', multiplier: '1' },
+  { label: '4K', shortEdge: '2160', multiplier: '1' },
+];
+const DEFAULT_RATIOS_TEXT = '1:1,3:2,2:3,16:9';
+const emptyGroupForm = (): GroupForm => ({ name: '', description: '', quotaWindow: '', quotaPoints: '' });
 const VIDEO_ADAPTERS: AdapterKind[] = ['openai-videos', 'seedance', 'wan'];
 function isVideoAdapter(kind?: string) { return VIDEO_ADAPTERS.includes(kind as AdapterKind); }
 function adapterLabel(kind: string | undefined, t: (key: string) => string) {
@@ -208,30 +233,85 @@ export default function AdminPage() {
 
   function beginModelEdit(item: AdminModel) {
     setEditingModelId(item.id);
+    const video = isVideoAdapter(item.provider.adapterKind);
+    const existingTiers = (item.resolutionTiers ?? []).map((tier) => ({
+      label: tier.label,
+      shortEdge: String(tier.shortEdge),
+      multiplier: String(item.pointMultipliers?.[tier.label] ?? 1),
+    }));
+    const tierRows = existingTiers.length
+      ? existingTiers
+      : (video ? item.allowedQualities : []).map((quality) => ({
+          label: quality,
+          shortEdge: '',
+          multiplier: String(item.pointMultipliers?.[quality] ?? 1),
+        }));
     setModelForm({
       providerId: item.providerId,
       displayName: item.displayName,
       upstreamModelId: item.upstreamModelId,
-      allowedSizes: item.allowedSizes.join(','),
+      allowedSizes: video ? item.allowedSizes.join(',') : '',
+      tierRows: tierRows.length ? tierRows : (video ? DEFAULT_VIDEO_TIER_ROWS : DEFAULT_TIER_ROWS).map((row) => ({ ...row })),
+      allowedRatios: video ? '' : (item.allowedRatios ?? []).join(','),
       allowedQualities: item.allowedQualities.join(','),
       allowedDurations: (item.allowedDurations ?? []).join(','),
       supportsEdit: item.supportsEdit,
       supportsInpaint: item.supportsInpaint,
       maxImages: item.maxImages,
       maxInputImages: item.maxInputImages,
+      costPerUnit: String(item.costPerUnit ?? 1),
       allowedGroupIds: item.allowedGroups.map(({ groupId }) => groupId),
     });
     setError('');
   }
 
+  function updateTierRow(index: number, field: keyof TierRowInput, value: string) {
+    setModelForm({ ...modelForm, tierRows: modelForm.tierRows.map((row, i) => i === index ? { ...row, [field]: value } : row) });
+  }
+
+  function addTierRow() {
+    setModelForm({ ...modelForm, tierRows: [...modelForm.tierRows, { label: '', shortEdge: '', multiplier: '' }] });
+  }
+
+  function removeTierRow(index: number) {
+    setModelForm({ ...modelForm, tierRows: modelForm.tierRows.filter((_, i) => i !== index) });
+  }
+
   async function saveModel(event: FormEvent) {
     event.preventDefault();
     const updating = Boolean(editingModelId);
+    const video = isVideoAdapter(providers.find((item) => item.id === modelForm.providerId)?.adapterKind);
+    const tierLabelCount = modelForm.tierRows.filter((row) => row.label.trim()).length;
+    const tierEdgeCount = modelForm.tierRows.filter((row) => row.shortEdge.trim()).length;
+    if (tierLabelCount !== tierEdgeCount) {
+      setError(t('分辨率名称与短边像素数量必须一致'));
+      return;
+    }
+    const tierPairs = zipTierRows(modelForm.tierRows);
+    const tierLabels = tierPairs.map((tier) => tier.label);
+    const typedQualities = modelForm.allowedQualities.split(',').map((item) => item.trim()).filter(Boolean);
+    const resolutionOptions = video ? (tierLabels.length ? tierLabels : typedQualities) : tierLabels;
+    const multipliers = tierPairs.map((tier) => tier.multiplier);
+    const pointMultipliers: Record<string, number> = {};
+    resolutionOptions.forEach((option, index) => {
+      const raw = multipliers[index];
+      if (!raw) return;
+      const number = Number(raw);
+      if (Number.isFinite(number) && number > 0 && number <= 100) pointMultipliers[option] = number;
+    });
+    const sizes = modelForm.allowedSizes.split(',').map((item) => item.trim()).filter(Boolean);
+    const ratios = modelForm.allowedRatios.split(',').map((item) => item.trim()).filter(Boolean);
+    const durations = modelForm.allowedDurations.split(',').map((item) => Number(item.trim())).filter((item) => Number.isInteger(item) && item > 0);
+    const { tierRows: tierRowsForm, ...formRest } = modelForm;
     const payload = {
-      ...modelForm,
-      allowedSizes: modelForm.allowedSizes.split(',').map((item) => item.trim()).filter(Boolean),
-      allowedQualities: modelForm.allowedQualities.split(',').map((item) => item.trim()).filter(Boolean),
-      allowedDurations: modelForm.allowedDurations.split(',').map((item) => Number(item.trim())).filter((item) => Number.isInteger(item) && item > 0),
+      ...formRest,
+      allowedSizes: video ? (sizes.length ? sizes : ['16:9']) : [],
+      resolutionTiers: tierPairs.map((tier) => ({ label: tier.label, shortEdge: tier.shortEdge })),
+      allowedRatios: video ? [] : ratios,
+      allowedQualities: video ? (resolutionOptions.length ? resolutionOptions : ['720P', '1080P']) : (typedQualities.length ? typedQualities : ['auto', 'low', 'medium', 'high']),
+      allowedDurations: video ? (durations.length ? durations : [5, 10]) : durations,
+      costPerUnit: Math.max(1, Number(modelForm.costPerUnit) || 1),
+      pointMultipliers: Object.keys(pointMultipliers).length ? pointMultipliers : null,
     };
     setError('');
     try {
@@ -260,13 +340,13 @@ export default function AdminPage() {
   }
 
   function beginGroupEdit(group: UserGroup) {
-    setEditingGroupId(group.id); setGroupForm({ name: group.name, description: group.description ?? '', quotaWindow: group.quotaWindow ?? '', quotaImages: group.quotaImages != null ? String(group.quotaImages) : '', videoQuotaWindow: group.videoQuotaWindow ?? '', quotaVideoSeconds: group.quotaVideoSeconds != null ? String(group.quotaVideoSeconds) : '' }); setError('');
+    setEditingGroupId(group.id); setGroupForm({ name: group.name, description: group.description ?? '', quotaWindow: group.quotaWindow ?? '', quotaPoints: group.quotaPoints != null ? String(group.quotaPoints) : '' }); setError('');
   }
 
   async function saveGroup(event: FormEvent) {
     event.preventDefault(); setError('');
     try {
-      const payload = { name: groupForm.name, description: groupForm.description || null, quotaWindow: groupForm.quotaWindow.trim() || null, quotaImages: groupForm.quotaImages.trim() ? Number(groupForm.quotaImages) : null, videoQuotaWindow: groupForm.videoQuotaWindow.trim() || null, quotaVideoSeconds: groupForm.quotaVideoSeconds.trim() ? Number(groupForm.quotaVideoSeconds) : null };
+      const payload = { name: groupForm.name, description: groupForm.description || null, quotaWindow: groupForm.quotaWindow.trim() || null, quotaPoints: groupForm.quotaPoints.trim() ? Number(groupForm.quotaPoints) : null };
       if (editingGroupId) await api(`/admin/user-groups/${editingGroupId}`, json('PATCH', payload));
       else await api('/admin/user-groups', json('POST', payload));
       const updating = Boolean(editingGroupId); cancelGroupEdit(); await refreshGroups();
@@ -348,6 +428,24 @@ export default function AdminPage() {
   }
 
   if (!authorized) return <main className="auth-page">{t('加载中…')}</main>;
+  const tierEditor = (
+    <div className="tier-editor">
+      <div className="tier-editor-head">
+        <span>{t('分辨率名称')}</span>
+        <span>{t('短边像素')}</span>
+        <span>{t('分辨率倍率')}</span>
+      </div>
+      {modelForm.tierRows.map((row, index) => (
+        <div className="tier-editor-row" key={index}>
+          <input className="field" placeholder={t('例如 1K')} value={row.label} onChange={(event) => updateTierRow(index, 'label', event.target.value)} />
+          <input className="field" inputMode="numeric" placeholder={t('例如 1024')} value={row.shortEdge} onChange={(event) => updateTierRow(index, 'shortEdge', event.target.value)} />
+          <input className="field" inputMode="decimal" placeholder={t('缺省为 1')} value={row.multiplier} onChange={(event) => updateTierRow(index, 'multiplier', event.target.value)} />
+          <button className="tier-editor-remove" type="button" aria-label={t('删除此行')} onClick={() => removeTierRow(index)}><Icon name="close" /></button>
+        </div>
+      ))}
+      <button className="button tier-editor-add" type="button" onClick={addTierRow}><Icon name="plus" />{t('添加一行')}</button>
+    </div>
+  );
 
   return <div className="shell admin-shell">
     {notice && <div className={`admin-toast ${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}>{notice.message}</div>}
@@ -389,14 +487,11 @@ export default function AdminPage() {
           <input className="field" required maxLength={64} placeholder={t('用户组名称')} value={groupForm.name} onChange={(event) => setGroupForm({ ...groupForm, name: event.target.value })} />
           <textarea className="field" maxLength={300} placeholder={t('说明（可选）')} value={groupForm.description} onChange={(event) => setGroupForm({ ...groupForm, description: event.target.value })} />
           <label>{t('生成窗口')}<input className="field" value={groupForm.quotaWindow} maxLength={4} placeholder={t('例如 5h，留空表示不限额')} onChange={(event) => setGroupForm({ ...groupForm, quotaWindow: event.target.value })} /></label>
-          <label>{t('窗口内每人张数')}<input className="field" value={groupForm.quotaImages} inputMode="numeric" placeholder={t('例如 5，留空表示不限额')} onChange={(event) => setGroupForm({ ...groupForm, quotaImages: event.target.value })} /></label>
-          <p className="muted">{t('滑动窗口按张计数，组内每人独立额度。重试也计张。窗口与张数必须同时填写或同时留空。')}</p>
-          <label>{t('视频窗口')}<input className="field" value={groupForm.videoQuotaWindow} maxLength={4} placeholder={t('例如 1d，留空表示不限额')} onChange={(event) => setGroupForm({ ...groupForm, videoQuotaWindow: event.target.value })} /></label>
-          <label>{t('窗口内每人秒数')}<input className="field" value={groupForm.quotaVideoSeconds} inputMode="numeric" placeholder={t('例如 60，留空表示不限额')} onChange={(event) => setGroupForm({ ...groupForm, quotaVideoSeconds: event.target.value })} /></label>
-          <p className="muted">{t('视频额度按秒计数，组内每人独立。提交和重试都扣所选时长。窗口与秒数必须同时填写或同时留空。')}</p>
+          <label>{t('窗口内每人积分')}<input className="field" value={groupForm.quotaPoints} inputMode="numeric" placeholder={t('例如 5，留空表示不限额')} onChange={(event) => setGroupForm({ ...groupForm, quotaPoints: event.target.value })} /></label>
+          <p className="muted">{t('滑动窗口按积分计数，组内每人独立额度。图片按模型单价 × 张数，视频按单价 × 秒数。重试也计积分。窗口与积分必须同时填写或同时留空。')}</p>
           <div className="form-actions">{editingGroupId && <button className="button" type="button" onClick={cancelGroupEdit}>{t('取消')}</button>}<button className="button primary">{editingGroupId ? t('保存修改') : t('创建用户组')}</button></div>
         </form></section>
-        <section className="card stack admin-panel"><h2>{t('已有用户组')}</h2>{groups.length === 0 && <p className="muted">{t('还没有用户组。')}</p>}{groups.map((group) => <div className="admin-list-item" key={group.id}><div><strong>{group.name}</strong><p className="muted">{group.description || t('无说明')} · {group._count.users}{t('位用户')} · {group._count.models}{t('个模型')} · {group._count.assetShares ?? 0}{t('条分享')} · {group.quotaWindow && group.quotaImages != null ? `${group.quotaImages}${t('张')} / ${group.quotaWindow}` : t('图片不限额')} · {group.videoQuotaWindow && group.quotaVideoSeconds != null ? `${group.quotaVideoSeconds}${t('秒')} / ${group.videoQuotaWindow}` : t('视频不限额')}</p></div><div className="admin-actions"><button className="button" onClick={() => beginGroupEdit(group)}>{t('编辑')}</button><button className="button danger" onClick={() => void deleteGroup(group)}>{t('删除')}</button></div></div>)}</section>
+        <section className="card stack admin-panel"><h2>{t('已有用户组')}</h2>{groups.length === 0 && <p className="muted">{t('还没有用户组。')}</p>}{groups.map((group) => <div className="admin-list-item" key={group.id}><div><strong>{group.name}</strong><p className="muted">{group.description || t('无说明')} · {group._count.users}{t('位用户')} · {group._count.models}{t('个模型')} · {group._count.assetShares ?? 0}{t('条分享')} · {group.quotaWindow && group.quotaPoints != null ? `${group.quotaPoints}${t('积分')} / ${group.quotaWindow}` : t('不限额')}</p></div><div className="admin-actions"><button className="button" onClick={() => beginGroupEdit(group)}>{t('编辑')}</button><button className="button danger" onClick={() => void deleteGroup(group)}>{t('删除')}</button></div></div>)}</section>
         <section className="card stack admin-panel admin-span-full"><h2>{t('分配用户')}</h2><p className="muted">{t('用户可以同时属于多个组。修改后立即生效；管理员默认拥有全部模型权限。')}</p>{users.map((user) => <div className="group-assignment-row" key={user.id}><div><strong>{user.displayName || user.username}</strong><p className="muted">@{user.username}</p></div><div className="permission-options">{user.role === 'ADMIN' ? <span className="muted">{t('管理员无需分组')}</span> : groups.length ? groups.map((group) => <label key={group.id}><input type="checkbox" checked={user.groups.some(({ id }) => id === group.id)} onChange={(event) => void updateUserGroups(user, group.id, event.target.checked)} /> {group.name}</label>) : <span className="muted">{t('请先创建用户组')}</span>}</div></div>)}{userCursor && <button className="button" onClick={() => void loadMoreUsers()}>{t('加载更多用户')}</button>}</section>
       </section>}
 
@@ -410,8 +505,8 @@ export default function AdminPage() {
           </div>
         </form>
         <section className="card admin-panel"><h2>{t('按用户')}</h2>
-          <div className="table-scroll"><table><thead><tr><th>{t('用户名')}</th><th>{t('出图张数')}</th><th>{t('视频秒数')}</th><th>{t('扣减次数')}</th></tr></thead>
-          <tbody>{usageRows.length ? usageRows.map((row) => <tr key={row.userId}><td>{row.displayName || row.username}<br /><span className="muted">@{row.username}</span></td><td>{row.imageCount}</td><td>{row.videoSeconds ?? 0}</td><td>{row.events}</td></tr>) : <tr><td colSpan={4} className="muted">{t('这段时间没有生成记录。')}</td></tr>}</tbody></table></div>
+          <div className="table-scroll"><table><thead><tr><th>{t('用户名')}</th><th>{t('出图张数')}</th><th>{t('视频秒数')}</th><th>{t('积分')}</th><th>{t('扣减次数')}</th></tr></thead>
+          <tbody>{usageRows.length ? usageRows.map((row) => <tr key={row.userId}><td>{row.displayName || row.username}<br /><span className="muted">@{row.username}</span></td><td>{row.imageCount}</td><td>{row.videoSeconds ?? 0}</td><td>{row.points}</td><td>{row.events}</td></tr>) : <tr><td colSpan={5} className="muted">{t('这段时间没有生成记录。')}</td></tr>}</tbody></table></div>
         </section>
       </section>}
 
@@ -440,26 +535,38 @@ export default function AdminPage() {
             const providerId = event.target.value;
             const provider = providers.find((item) => item.id === providerId);
             const video = isVideoAdapter(provider?.adapterKind);
+            const prevVideo = isVideoAdapter(providers.find((item) => item.id === modelForm.providerId)?.adapterKind);
+            const kindChanged = prevVideo !== video;
+            const defaultTierRows = (video ? DEFAULT_VIDEO_TIER_ROWS : DEFAULT_TIER_ROWS).map((row) => ({ ...row, multiplier: '' }));
             setModelForm({
               ...modelForm,
               providerId,
               allowedSizes: video ? (modelForm.allowedSizes || '16:9,9:16,1:1') : modelForm.allowedSizes,
               allowedQualities: video ? (modelForm.allowedQualities.includes('auto') || !modelForm.allowedQualities ? '720P,1080P' : modelForm.allowedQualities) : (modelForm.allowedQualities || 'auto,low,medium,high'),
               allowedDurations: video ? (modelForm.allowedDurations || '5,10') : modelForm.allowedDurations,
+              tierRows: kindChanged || !modelForm.tierRows.some((row) => row.label.trim() || row.shortEdge.trim())
+                ? defaultTierRows
+                : modelForm.tierRows.map((row) => ({ ...row, multiplier: '' })),
+              allowedRatios: video ? modelForm.allowedRatios : (modelForm.allowedRatios || DEFAULT_RATIOS_TEXT),
               supportsInpaint: video ? false : modelForm.supportsInpaint,
               maxImages: video ? 1 : modelForm.maxImages,
             });
           }}><option value="">{t('选择供应商')}</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name} · {adapterLabel(provider.adapterKind, t)}</option>)}</select>
           <input className="field" required placeholder={t('用户看到的名称')} value={modelForm.displayName} onChange={(event) => setModelForm({ ...modelForm, displayName: event.target.value })} />
           <input className="field" required placeholder={t('真实模型 ID')} value={modelForm.upstreamModelId} onChange={(event) => setModelForm({ ...modelForm, upstreamModelId: event.target.value })} />
+          <label>{t('每单位消耗积分')}<input className="field" type="number" min="1" max="1000" value={modelForm.costPerUnit} onChange={(event) => setModelForm({ ...modelForm, costPerUnit: event.target.value })} /></label>
+          <p className="muted">{t('图片')} = {t('积分/张')}，{t('视频')} = {t('积分/秒')} · {t('实际积分 = 基准积分 × 分辨率倍率，结果向上取整')}</p>
           {isVideoAdapter(providers.find((item) => item.id === modelForm.providerId)?.adapterKind) ? <>
-            <input className="field" placeholder={t('比例，逗号分隔；例如 16:9,9:16,1:1')} value={modelForm.allowedSizes} onChange={(event) => setModelForm({ ...modelForm, allowedSizes: event.target.value })} />
+            {tierEditor}
+            <label>{t('比例')}<input className="field" placeholder={t('比例，逗号分隔；例如 16:9,9:16,1:1')} value={modelForm.allowedSizes} onChange={(event) => setModelForm({ ...modelForm, allowedSizes: event.target.value })} /></label>
             <input className="field" required placeholder={t('时长秒，逗号分隔；例如 5,10')} value={modelForm.allowedDurations} onChange={(event) => setModelForm({ ...modelForm, allowedDurations: event.target.value })} />
-            <input className="field" placeholder={t('分辨率，逗号分隔；可空')} value={modelForm.allowedQualities} onChange={(event) => setModelForm({ ...modelForm, allowedQualities: event.target.value })} />
             <label>{t('单次最多参考图数量')} <input className="field" type="number" min="1" max="8" value={modelForm.maxInputImages} onChange={(event) => setModelForm({ ...modelForm, maxInputImages: Number(event.target.value) })} /></label>
             <label><input type="checkbox" checked={modelForm.supportsEdit} onChange={(event) => setModelForm({ ...modelForm, supportsEdit: event.target.checked })} /> {t('图生视频')}</label>
           </> : <>
-            <input className="field" placeholder={t('尺寸，逗号分隔；留空默认 auto')} value={modelForm.allowedSizes} onChange={(event) => setModelForm({ ...modelForm, allowedSizes: event.target.value })} />
+            {tierEditor}
+            <label>{t('比例')}<input className="field" placeholder={t('比例，逗号分隔；例如 1:1,3:2,2:3,16:9')} value={modelForm.allowedRatios} onChange={(event) => setModelForm({ ...modelForm, allowedRatios: event.target.value })} /></label>
+            <p className="muted">{t('比例与档位自由组合，例如 1K + 3:2 自动生成 1536x1024')}</p>
+            <button className="button" type="button" onClick={() => setModelForm({ ...modelForm, tierRows: FULL_DEFAULT_TIER_ROWS.map((row) => ({ ...row })), allowedRatios: DEFAULT_RATIOS_TEXT })}>{t('填入默认档位与比例')}</button>
             <input className="field" required placeholder={t('质量，逗号分隔')} value={modelForm.allowedQualities} onChange={(event) => setModelForm({ ...modelForm, allowedQualities: event.target.value })} />
             <label>{t('单次生成数量上限')} <input className="field" type="number" min="1" max="4" value={modelForm.maxImages} onChange={(event) => setModelForm({ ...modelForm, maxImages: Number(event.target.value) })} /></label>
             <label>{t('单次最多参考图数量')} <input className="field" type="number" min="1" max="8" value={modelForm.maxInputImages} onChange={(event) => setModelForm({ ...modelForm, maxInputImages: Number(event.target.value) })} /></label>
@@ -469,7 +576,9 @@ export default function AdminPage() {
           <fieldset className="permission-fieldset"><legend>{t('可用用户组')}</legend><p className="muted">{t('不勾选表示模型为私有，仅管理员可用；管理员始终拥有访问权限。')}</p><div className="permission-options">{groups.map((group) => <label key={group.id}><input type="checkbox" checked={modelForm.allowedGroupIds.includes(group.id)} onChange={(event) => toggleModelGroup(group.id, event.target.checked)} /> {group.name}</label>)}{groups.length === 0 && <span className="muted">{t('尚未创建用户组')}</span>}</div></fieldset>
           <div className="form-actions">{editingModelId && <button className="button" type="button" onClick={cancelModelEdit}>{t('取消')}</button>}<button className="button primary">{editingModelId ? t('保存修改') : t('保存模型')}</button></div>
         </form></section>
-        <section className="card stack admin-panel"><h2>{t('已有模型')}</h2>{models.length === 0 && <p className="muted">{t('还没有模型。')}</p>}{models.map((item) => <div className="admin-list-item" key={item.id}><div><strong>{item.displayName}</strong><p className="muted">{item.mediaKind === 'VIDEO' ? t('视频') : t('图片')} · {item.provider.name}/{item.upstreamModelId} · {item.enabled ? t('启用') : t('停用')}<br />{t('权限')}：{item.allowedGroups.length ? item.allowedGroups.map(({ group }) => group.name).join('、') : t('仅管理员（私有）')}</p></div><div className="admin-actions">
+        <section className="card stack admin-panel"><h2>{t('已有模型')}</h2>{models.length === 0 && <p className="muted">{t('还没有模型。')}</p>}{models.map((item) => <div className="admin-list-item" key={item.id}><div><strong>{item.displayName}</strong><p className="muted">{item.mediaKind === 'VIDEO' ? t('视频') : t('图片')} · {item.provider.name}/{item.upstreamModelId} · {item.enabled ? t('启用') : t('停用')}<br />{t('权限')}：{item.allowedGroups.length ? item.allowedGroups.map(({ group }) => group.name).join('、') : t('仅管理员（私有）')}{item.mediaKind === 'VIDEO'
+            ? <><br />{t('分辨率')}：{(item.resolutionTiers?.length ? item.resolutionTiers.map((tier) => `${tier.label}:${tier.shortEdge}`) : item.allowedQualities).join('、')} · {t('比例')}：{(item.allowedSizes ?? []).join('、')}</>
+            : <><br />{t('分辨率')}：{(item.resolutionTiers ?? []).map((tier) => `${tier.label}:${tier.shortEdge}`).join('、')} · {t('比例')}：{(item.allowedRatios ?? []).join('、')}</>}</p></div><div className="admin-actions">
           <button className="button" onClick={() => beginModelEdit(item)}>{t('编辑')}</button><button className="button" onClick={() => void toggleModel(item)}>{item.enabled ? t('停用') : t('启用')}</button><button className="button danger" onClick={() => void deleteModel(item)}>{t('删除')}</button>
         </div></div>)}</section>
       </section>}

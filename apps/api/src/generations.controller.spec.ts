@@ -115,7 +115,7 @@ describe('GenerationsController retry', () => {
       asset: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     };
     const createPrisma: any = {
-      model: { findFirst: jest.fn().mockResolvedValue({ id: modelId, enabled: true, mediaKind: 'IMAGE', supportsGeneration: true, supportsEdit: true, supportsInpaint: false, allowedSizes: ['1024x1024'], allowedQualities: ['standard'], maxImages: 2, maxInputImages: 2, defaults: { size: '1024x1024', quality: 'standard', count: 1 }, provider: { name: 'provider' } }) },
+      model: { findFirst: jest.fn().mockResolvedValue({ id: modelId, enabled: true, mediaKind: 'IMAGE', supportsGeneration: true, supportsEdit: true, supportsInpaint: false, resolutionTiers: [{ label: '1K', shortEdge: 1024 }], allowedRatios: ['1:1'], allowedQualities: ['standard'], maxImages: 2, maxInputImages: 2, defaults: { size: '1024x1024', quality: 'standard', count: 1 }, costPerUnit: 1, provider: { name: 'provider' } }) },
       asset: { findMany: jest.fn().mockResolvedValue([{ id: sourceId }]) },
       conversation: { update: jest.fn().mockResolvedValue({}) },
       $transaction: jest.fn((callback: any) => callback(transaction)),
@@ -129,8 +129,30 @@ describe('GenerationsController retry', () => {
       where: { userId_prompt: { userId: 'user-1', prompt: 'combine these images' } },
     }));
     expect(transaction.generationJob.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ imageCount: 1, parameters: expect.objectContaining({ sourceAssetIds: [sourceId] }) }) }));
-    expect(createQuota.reserveJobInTransaction).toHaveBeenCalledWith(transaction, user, 1, expect.objectContaining({ jobId: 'job-1', kind: 'SUBMIT' }));
+    expect(createQuota.reserveJobInTransaction).toHaveBeenCalledWith(transaction, user, 1, expect.objectContaining({ jobId: 'job-1', kind: 'SUBMIT', imageCount: 1, videoSeconds: 0 }));
     expect(transaction.conversation.create).toHaveBeenCalledWith({ data: { userId: 'user-1', title: 'combine these images' } });
+  });
+
+  it('charges the resolution multiplier when creating an image', async () => {
+    const modelId = '11111111-1111-4111-8111-111111111111';
+    const transaction: any = {
+      conversation: { create: jest.fn().mockResolvedValue({ id: 'conversation-1' }) },
+      promptEntry: { upsert: jest.fn().mockResolvedValue({}) },
+      generationJob: { create: jest.fn().mockResolvedValue({ id: 'job-1', status: 'QUEUED' }) },
+      asset: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    };
+    const createPrisma: any = {
+      model: { findFirst: jest.fn().mockResolvedValue({ id: modelId, enabled: true, mediaKind: 'IMAGE', supportsGeneration: true, supportsEdit: false, supportsInpaint: false, resolutionTiers: [{ label: '1K', shortEdge: 1024 }, { label: '2K', shortEdge: 1440 }], allowedRatios: ['1:1'], allowedQualities: ['standard'], maxImages: 1, maxInputImages: 1, defaults: { size: '1024x1024', quality: 'standard', count: 1 }, costPerUnit: 1, pointMultipliers: { '1K': 1, '2K': 2 }, provider: { name: 'provider' } }) },
+      asset: { findMany: jest.fn().mockResolvedValue([]) },
+      conversation: { update: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn((callback: any) => callback(transaction)),
+    };
+    const createQuota: any = { reserveJobInTransaction: jest.fn().mockResolvedValue(undefined) };
+    const createController = new GenerationsController(createPrisma, queue, queue, limits, createQuota, assets, lifecycle, events);
+
+    await createController.create(user, { modelId, prompt: 'a tall building', size: '1440x1440', count: 1 });
+
+    expect(createQuota.reserveJobInTransaction).toHaveBeenCalledWith(transaction, user, 2, expect.objectContaining({ jobId: 'job-1', kind: 'SUBMIT', imageCount: 1, videoSeconds: 0 }));
   });
 
   it('uses the first ten characters of a Chinese prompt and the first four words of an English prompt', () => {

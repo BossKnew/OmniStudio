@@ -3,10 +3,30 @@ import { api, json } from '@/lib/api';
 import GenerationSettings from '@/components/GenerationSettings';
 import MaskCanvas from '@/components/MaskCanvas';
 import PromptHistory from '@/components/PromptHistory';
-import Icon from '@/components/Icon';
+import { buildResolutionMatrix, firstImageSize, parseSize, type ResolutionTier } from '@/lib/resolution-options';
 import type { Asset, GenerationCreated, GenerationMode, GenerationReuse, MediaKind, ReferenceSelection, StudioModel } from '@/lib/studio-types';
+import Icon from '@/components/Icon';
 import type { OptionLabelMap } from '@/lib/option-labels';
 import { useI18n } from '@/lib/i18n';
+
+const DEFAULT_POINT_MULTIPLIER = 1;
+const MAX_POINT_MULTIPLIER = 100;
+
+function pointMultiplier(multipliers: Record<string, number> | null | undefined, key: string | undefined): number {
+  if (!key) return DEFAULT_POINT_MULTIPLIER;
+  const value = multipliers?.[key];
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > MAX_POINT_MULTIPLIER) return DEFAULT_POINT_MULTIPLIER;
+  return value;
+}
+
+/** 与 API tierLabelForSize 一致：按短边匹配分辨率档位。 */
+function tierLabelForSize(tiers: ResolutionTier[] | undefined, size: string): string | undefined {
+  if (!tiers?.length) return undefined;
+  const parsed = parseSize(size);
+  if (!parsed) return undefined;
+  const shortEdge = Math.min(parsed.width, parsed.height);
+  return tiers.find((tier) => tier.shortEdge === shortEdge)?.label;
+}
 
 type StudioComposerProps = {
   models: StudioModel[];
@@ -61,7 +81,11 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
 
     if (targetModel) {
       setModelId(targetModel.id);
-      const nextSize = reusePreset.size && targetModel.allowedSizes.includes(reusePreset.size) ? reusePreset.size : targetModel.defaults.size ?? targetModel.allowedSizes[0];
+      const videoModel = (targetModel.mediaKind ?? 'IMAGE') === 'VIDEO';
+      const imageSizeOk = reusePreset.size && buildResolutionMatrix(targetModel.resolutionTiers ?? [], targetModel.allowedRatios ?? [])?.partsOf(reusePreset.size) != null;
+      const nextSize = reusePreset.size && (videoModel ? targetModel.allowedSizes.includes(reusePreset.size) : imageSizeOk)
+        ? reusePreset.size
+        : (targetModel.defaults.size ?? (videoModel ? targetModel.allowedSizes[0] : firstImageSize(targetModel.resolutionTiers ?? [], targetModel.allowedRatios ?? [])));
       const nextQuality = reusePreset.quality && targetModel.allowedQualities.includes(reusePreset.quality) ? reusePreset.quality : targetModel.defaults.quality ?? targetModel.allowedQualities[0];
       const durations = targetModel.allowedDurations ?? [];
       const nextDuration = reusePreset.durationSeconds && durations.includes(reusePreset.durationSeconds) ? reusePreset.durationSeconds : targetModel.defaults.durationSeconds ?? durations[0] ?? 5;
@@ -87,7 +111,8 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
 
   function chooseModel(item: StudioModel) {
     setModelId(item.id);
-    setSize(item.defaults.size ?? item.allowedSizes[0]);
+    const videoModel = (item.mediaKind ?? 'IMAGE') === 'VIDEO';
+    setSize(item.defaults.size ?? (videoModel ? item.allowedSizes[0] : firstImageSize(item.resolutionTiers ?? [], item.allowedRatios ?? [])));
     setQuality(item.defaults.quality ?? item.allowedQualities[0] ?? '');
     setDuration(item.defaults.durationSeconds ?? item.allowedDurations?.[0] ?? 5);
     setCount(item.defaults.count ?? 1);
@@ -106,7 +131,7 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
     setSourceInputKey((current) => current + 1);
     setError('');
     if (model) {
-      setSize(model.defaults.size ?? model.allowedSizes[0]);
+      setSize(model.defaults.size ?? ((model.mediaKind ?? 'IMAGE') === 'VIDEO' ? model.allowedSizes[0] : firstImageSize(model.resolutionTiers ?? [], model.allowedRatios ?? [])));
       setQuality(model.defaults.quality ?? model.allowedQualities[0]);
       setDuration(model.defaults.durationSeconds ?? model.allowedDurations?.[0] ?? 5);
       setCount(model.defaults.count ?? 1);
@@ -241,6 +266,15 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
   }
 
   const maskSource = primaryReference?.kind === 'asset' ? primaryReference.asset.contentUrl : primaryReference?.file;
+  const estimatedPoints = useMemo(() => {
+    if (!model) return 0;
+    if (video) {
+      const multiplier = pointMultiplier(model.pointMultipliers, quality || undefined);
+      return Math.ceil(model.costPerUnit * duration * multiplier);
+    }
+    const multiplier = pointMultiplier(model.pointMultipliers, tierLabelForSize(model.resolutionTiers, size));
+    return Math.ceil(model.costPerUnit * count * multiplier);
+  }, [model, video, quality, duration, size, count]);
 
   return <form className={'composer card stack ' + (conversationId ? 'compact-composer' : '')} onSubmit={submit}>
     <h1>{t('想创作什么？')}</h1>
@@ -288,6 +322,8 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
       <GenerationSettings
         kind={mediaKind}
         sizes={model?.allowedSizes ?? []}
+      tiers={model?.resolutionTiers ?? []}
+      ratios={model?.allowedRatios ?? []}
         qualities={model?.allowedQualities ?? []}
         durations={model?.allowedDurations ?? []}
         optionLabels={optionLabels}
@@ -302,7 +338,10 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
         onDurationChange={setDuration}
         onCountChange={setCount}
       />
-      <button className="button primary generate-button" disabled={busy || !modelId || mode === 'INPAINT' && !maskFile}>{busy ? t('正在提交/生成…') : t('开始生成')}</button>
+      <div className="generate-area">
+        {model && <span className="generate-cost">{t('预计消耗')} <strong>{estimatedPoints}</strong>{t('积分')}</span>}
+        <button className="button primary generate-button" disabled={busy || !modelId || mode === 'INPAINT' && !maskFile}>{busy ? t('正在提交/生成…') : t('开始生成')}</button>
+      </div>
     </div>
     {error && <p className="error composer-error">{error}</p>}
   </form>;

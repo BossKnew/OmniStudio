@@ -98,13 +98,9 @@ export default function StudioSidebar({
       <p className="usage-row"><span>{t('存储')}</span><strong>{formatStorageBytes(usage.storageBytes)} / {formatStorageBytes(usage.storageQuotaBytes)}</strong></p>
       {usage.policies.map((policy) => <p className={'usage-row ' + (policy.remaining === 0 ? 'usage-full' : '')} key={policy.groupId}>
         <span title={policy.groupName}>{policy.groupName}</span>
-        <strong>{policy.used} / {policy.images} · {policy.window}</strong>
+        <strong>{policy.used} / {policy.points} · {policy.window}</strong>
       </p>)}
-      {(usage.videoPolicies ?? []).map((policy) => <p className={'usage-row ' + (policy.remaining === 0 ? 'usage-full' : '')} key={'video-' + policy.groupId}>
-        <span title={policy.groupName}>{policy.groupName} · {t('视频')}</span>
-        <strong>{policy.used} / {policy.seconds}s · {policy.window}</strong>
-      </p>)}
-    </section>}
+          </section>}
     <div className="account-area">
       {accountOpen && <div className="account-popover" role="menu">
         <button className="account-menu-item" role="menuitem" onClick={() => { setAccountOpen(false); onShowProfile(); }}>{t('个人信息')}</button>

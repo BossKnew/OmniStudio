@@ -1,7 +1,7 @@
+import { buildResolutionMatrix, type ResolutionTier } from '@/lib/resolution-options';
+import { useI18n } from '@/lib/i18n';
 import { FormEvent, useEffect, useState } from 'react';
 import { api, json } from '@/lib/api';
-import { useI18n } from '@/lib/i18n';
-
 type LabelRow = { id: string; value: string; zh: string; en: string };
 type OptionLabelsSettingsProps = {
   onNotice: (kind: 'success' | 'error', message: string) => void;
@@ -29,9 +29,12 @@ export default function OptionLabelsSettings({ onNotice, onError }: OptionLabels
 
   async function suggestFromModels() {
     try {
-      const models = await api<Array<{ allowedSizes: string[]; allowedQualities: string[] }>>('/admin/models');
+      const models = await api<Array<{ allowedSizes: string[]; allowedQualities: string[]; resolutionTiers?: ResolutionTier[]; allowedRatios?: string[] }>>('/admin/models');
       const existing = new Set(rows.map((row) => row.value.trim()).filter(Boolean));
-      const extras = [...new Set(models.flatMap((model) => [...model.allowedSizes, ...model.allowedQualities]))]
+      const extras = [...new Set(models.flatMap((model) => {
+        const sizes = model.allowedSizes.length ? model.allowedSizes : (buildResolutionMatrix(model.resolutionTiers ?? [], model.allowedRatios ?? [])?.entries.map((entry) => entry.size) ?? []);
+        return [...sizes, ...model.allowedQualities];
+      }))]
         .filter((value) => value && !existing.has(value))
         .sort((left, right) => left.localeCompare(right));
       if (!extras.length) {

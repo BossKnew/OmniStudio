@@ -16,18 +16,7 @@ export type UsagePolicy = {
   groupId: string;
   groupName: string;
   window: string;
-  images: number;
-  used: number;
-  remaining: number;
-  resetAt: string | null;
-  retryAfterSeconds: number;
-};
-
-export type VideoUsagePolicy = {
-  groupId: string;
-  groupName: string;
-  window: string;
-  seconds: number;
+  points: number;
   used: number;
   remaining: number;
   resetAt: string | null;
@@ -38,13 +27,13 @@ export type UsageSnapshot = {
   storageBytes: string;
   storageQuotaBytes: string;
   policies: UsagePolicy[];
-  videoPolicies?: VideoUsagePolicy[];
 };
 export type CursorPage<T> = { items: T[]; nextCursor: string | null; total?: number };
 
 export type MediaKind = 'IMAGE' | 'VIDEO';
 export type GenerationMode = 'TEXT_TO_IMAGE' | 'IMAGE_EDIT' | 'INPAINT' | 'TEXT_TO_VIDEO' | 'IMAGE_TO_VIDEO';
 export type GenerationStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+export type ResolutionTier = { label: string; shortEdge: number };
 
 export type StudioModel = {
   id: string;
@@ -54,10 +43,14 @@ export type StudioModel = {
   supportsEdit: boolean;
   supportsInpaint: boolean;
   allowedSizes: string[];
+  resolutionTiers?: ResolutionTier[];
+  allowedRatios?: string[];
   allowedQualities: string[];
   allowedDurations?: number[];
   maxImages: number;
   maxInputImages: number;
+  costPerUnit: number;
+  pointMultipliers?: Record<string, number> | null;
   defaults: { size?: string; quality?: string; count?: number; durationSeconds?: number };
 };
 

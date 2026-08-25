@@ -161,11 +161,15 @@ model Model {
   allowedSizes       Json
   allowedQualities   Json
   allowedDurations   Json               @default("[]")
+  resolutionTiers    Json               @default("[]")
+  allowedRatios      Json               @default("[]")
   maxImages          Int                @default(1)
   maxInputImages     Int                @default(1)
   defaults           Json
   enabled            Boolean            @default(true)
   sortOrder          Int                @default(0)
+	costPerUnit        Int                @default(1)
+	pointMultipliers   Json?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
   provider           Provider           @relation(fields: [providerId], references: [id])
@@ -181,9 +185,7 @@ model UserGroup {
   name        String                @unique
   description String?
   quotaWindow        String?
-  quotaImages        Int?
-  videoQuotaWindow   String?
-  quotaVideoSeconds  Int?
+  quotaPoints       Int?
   createdAt   DateTime              @default(now())
   updatedAt   DateTime              @updatedAt
   users       UserGroupMembership[]
@@ -308,6 +310,7 @@ model QuotaEvent {
   modelId    String?
   imageCount   Int      @default(0)
   videoSeconds Int      @default(0)
+	points       Int      @default(0)
   kind         String
   createdAt  DateTime       @default(now())
   user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)

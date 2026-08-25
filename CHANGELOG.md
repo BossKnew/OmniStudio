@@ -2,6 +2,21 @@
 
 All notable changes to OmniStudio are documented here.
 
+## [Unreleased]
+
+- Image resolution is now configured as tiers (label + short edge, e.g. 1K = 1024px) plus aspect ratios; every tier × ratio combination is available and the pixel size is computed automatically (e.g. 1K + 3:2 = 1536x1024, 2K + 16:9 = 2560x1440, long side rounded to a multiple of 8).
+- Admin model form replaces the size preset list with tier and ratio inputs; resolution point multipliers are keyed per tier.
+--- Admin model form splits each resolution tier into two inputs: the resolution label and the short-edge pixels, paired positionally instead of the combined `1K:1024` syntax.
+- The generation settings popover now opens directly in its final position (above or below the trigger); it no longer flashes toward the default position first.
+
+## [0.2.3] - 2026-08-24
+
+- Generation quotas are now points-based: every model has a points-per-unit price (per image, or per second for video), and group quotas cap points inside a sliding window shared by images and video.
+- Existing group quotas convert automatically: image counts become points, video seconds add points into the same window, and historical quota events are backfilled at the default price of 1.
+- Retries re-price with the model's current price and still count against the quota, as before.
+- Admin: the group quota form uses a window plus points per person; the model form adds a points-per-unit price; the usage ledger gains a points column.
+- Studio sidebar and model picker show points remaining and per-unit prices.
+
 ## [0.2.2] - 2026-08-22
 
 - Prompt polishing supports image editing: admins can enable it per model, and image-edit reference images are sent to the polishing model as part of the request.

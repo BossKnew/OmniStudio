@@ -16,7 +16,9 @@ import { GENERATION_QUEUE_OPTIONS, isVideoGenerationMode } from './domain-consta
 import { GenerationEventsService } from './generation-events.service';
 import { GenerationLifecycleService } from './generation-lifecycle.service';
 import { serializeAssetLinks } from './asset-response';
+import { computeImageSize, imageSizeAllowed, tierLabelForSize, type ResolutionTier } from './resolution';
 import { accessibleReferencedAssetWhere, accessibleSourceWhere } from './asset-access';
+import { pointsForGeneration } from './generation-quota';
 
 const generationSchema = z.object({
   prompt: safeText(8000), modelId: uuidSchema, mode: z.enum(['TEXT_TO_IMAGE', 'IMAGE_EDIT', 'INPAINT', 'TEXT_TO_VIDEO', 'IMAGE_TO_VIDEO']).optional(),
@@ -87,15 +89,17 @@ export class GenerationsController {
     if (mode === 'INPAINT' && !model.supportsInpaint) throw new BadRequestException('模型不支持局部重绘');
     if (mode === 'TEXT_TO_VIDEO' && !model.supportsGeneration) throw new BadRequestException('模型不支持文生视频');
     if (mode === 'IMAGE_TO_VIDEO' && !model.supportsEdit) throw new BadRequestException('模型不支持图生视频');
-    const allowedSizes = model.allowedSizes as string[];
+    const imageTiers = (model.resolutionTiers as ResolutionTier[]) ?? [];
+    const allowedRatios = (model.allowedRatios as string[]) ?? [];
+    const allowedSizes = (model.allowedSizes as string[]) ?? [];
     const allowedQualities = (model.allowedQualities as string[]) ?? [];
     const allowedDurations = Array.isArray(model.allowedDurations) ? (model.allowedDurations as number[]) : [];
     const defaults = readGenerationParameters(model.defaults);
-    const size = body.size ?? defaults.size ?? allowedSizes[0];
+    const size = body.size ?? defaults.size ?? (videoModel ? allowedSizes[0] : computeImageSize(imageTiers[0]?.shortEdge ?? 0, allowedRatios[0] ?? '') ?? '1024x1024');
     const quality = body.quality ?? defaults.quality ?? allowedQualities[0];
     const count = videoModel ? 1 : Math.min(model.maxImages, Math.max(1, Number(body.count) || 1));
     const durationSeconds = videoModel ? (body.durationSeconds ?? defaults.durationSeconds ?? allowedDurations[0]) : undefined;
-    if (!allowedSizes.includes(size)) throw new BadRequestException(videoModel ? '比例不受该模型支持' : '尺寸或质量不受该模型支持');
+    if (videoModel ? !allowedSizes.includes(size) : !imageSizeAllowed(imageTiers, allowedRatios, size)) throw new BadRequestException(videoModel ? '比例不受该模型支持' : '尺寸或质量不受该模型支持');
     if (allowedQualities.length ? !allowedQualities.includes(quality) : Boolean(body.quality)) throw new BadRequestException(videoModel ? '分辨率不受该模型支持' : '尺寸或质量不受该模型支持');
     if (videoModel && (typeof durationSeconds !== 'number' || !allowedDurations.includes(durationSeconds))) throw new BadRequestException('时长不受该模型支持');
     const sourceIds = Array.isArray(body.sourceAssetIds) ? [...new Set(body.sourceAssetIds)] : [];
@@ -128,7 +132,8 @@ export class GenerationsController {
           userId: user.id, conversationId: targetConversationId, modelId: model.id, mediaKind: videoModel ? 'VIDEO' : 'IMAGE', mode, prompt, parameters, imageCount: count,
           modelSnapshot: { displayName: model.displayName, upstreamModelId: model.upstreamModelId, providerName: model.provider.name },
         }});
-        await this.quota.reserveJobInTransaction(transaction, user, videoModel ? 0 : count, { jobId: created.id, modelId: model.id, kind: 'SUBMIT', videoSeconds: videoModel ? durationSeconds : 0 });
+        const points = pointsForGeneration({ mediaKind: videoModel ? 'VIDEO' : 'IMAGE', costPerUnit: model.costPerUnit, count, durationSeconds, size, quality, multiplierKey: videoModel ? undefined : tierLabelForSize(imageTiers, size), pointMultipliers: model.pointMultipliers });
+        await this.quota.reserveJobInTransaction(transaction, user, points, { jobId: created.id, modelId: model.id, kind: 'SUBMIT', imageCount: videoModel ? 0 : count, videoSeconds: videoModel ? durationSeconds : 0 });
         if (body.maskAssetId) await transaction.asset.updateMany({ where: { id: body.maskAssetId, userId: user.id }, data: { jobId: created.id, role: 'MASK' } });
         return { created, targetConversationId };
       });
@@ -213,7 +218,9 @@ export class GenerationsController {
     if (retryAssets.length !== new Set(requiredAssetIds).size) throw new BadRequestException(job.mode === 'INPAINT' ? '原任务的参考图或遮罩已不存在，无法重试' : '原任务的参考图已不存在，无法重试');
 
     const retryVideo = isVideoGenerationMode(job.mode);
-    await this.quota.reacquireJob(user, job.id, retryVideo ? 0 : (job.imageCount || Math.max(1, Number(parameters.count) || 1)), job.modelId, retryVideo ? (parameters.durationSeconds ?? 0) : 0);
+    const retryTiers = (job.model.resolutionTiers as ResolutionTier[]) ?? [];
+    const points = pointsForGeneration({ mediaKind: retryVideo ? 'VIDEO' : 'IMAGE', costPerUnit: job.model.costPerUnit, count: job.imageCount || Math.max(1, Number(parameters.count) || 1), durationSeconds: parameters.durationSeconds, size: parameters.size, quality: parameters.quality, multiplierKey: retryVideo ? undefined : (parameters.size ? tierLabelForSize(retryTiers, parameters.size) : undefined), pointMultipliers: job.model.pointMultipliers });
+    await this.quota.reacquireJob(user, job.id, points, { jobId: job.id, modelId: job.modelId, kind: 'RETRY', imageCount: retryVideo ? 0 : (job.imageCount || Math.max(1, Number(parameters.count) || 1)), videoSeconds: retryVideo ? (parameters.durationSeconds ?? 0) : 0 });
     try {
       await this.assets.removeJobOutputs(user.id, job.id);
     } catch (error) {
