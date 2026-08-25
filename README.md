@@ -13,7 +13,7 @@ OmniStudio is a self-hosted image and video generation workspace for teams: text
 - **Administration**: user approval, user groups, model access control, per-group points-based generation quotas (model price × count / seconds, shared by images and video)
 - **Prompt polishing**: text-to-image, image-edit, and text-to-video, with multiple configurable providers
 - **Security**: mandatory admin MFA, encrypted API keys and MFA secrets, SSRF protection, rate limiting, CSRF protection
-- **UI**: Chinese and EnglishChinese and English
+- **UI**: English and Chinese
 
 ## 🧰 Technology Stack
 
