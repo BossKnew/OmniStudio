@@ -4,7 +4,7 @@ All notable changes to OmniStudio are documented here.
 
 ## [Unreleased]
 
-- Image resolution is now configured as tiers (label + short edge, e.g. 1K = 1024px) plus aspect ratios; every tier × ratio combination is available and the pixel size is computed automatically (e.g. 1K + 3:2 = 1536x1024, 2K + 16:9 = 2560x1440, long side rounded to a multiple of 8).
+- Image generation: new Qwen-Image (DashScope 千问生图) adapter speaks the native synchronous multimodal-generation API — text-to-image and reference-image editing (up to 3 reference images); mask inpainting is not supported by the upstream API.
 - Admin model form replaces the size preset list with tier and ratio inputs; resolution point multipliers are keyed per tier.
 --- Admin model form splits each resolution tier into two inputs: the resolution label and the short-edge pixels, paired positionally instead of the combined `1K:1024` syntax.
 - The generation settings popover now opens directly in its final position (above or below the trigger); it no longer flashes toward the default position first.

@@ -547,6 +547,8 @@ const english: Record<string, string> = {
   'Wan（通义万相）': 'Wan (DashScope)',
   'Base URL，例如': 'Base URL, e.g.',
   '任务等待超时（秒）': 'Job wait timeout (seconds)',
+  '千问生图（通义万相）': 'Qwen Image (DashScope)',
+  '千问生图（Qwen-Image）的 Base URL 填 https://dashscope.aliyuncs.com/api/v1，不要带 compatible-mode。模型 ID 例如 qwen-image-3.0、qwen-image-2.0-pro、qwen-image-plus。支持文生图与参考图编辑（最多 3 张参考图），不支持蒙版重绘；分辨率档位建议不超过 1K（总像素上限 2048×2048）。': 'For Qwen-Image, use https://dashscope.aliyuncs.com/api/v1 (do not use compatible-mode). Model IDs: qwen-image-3.0, qwen-image-2.0-pro, qwen-image-plus. Supports text-to-image and reference-image editing (up to 3 images); mask inpainting is not supported. Keep the resolution tier at 1K or lower (max 2048×2048 pixels).',
   'Wan 的 Base URL 优先填 https://dashscope.aliyuncs.com/api/v1。不要带 video-synthesis，也不要使用 compatible-mode。业务空间域名（*.maas.aliyuncs.com）在部分网络下会 TLS 握手失败。文生视频模型 ID 填 wan2.7-t2v 或 wan2.7-t2v-2026-06-12，分辨率填 720P / 1080P。': 'For Wan, prefer https://dashscope.aliyuncs.com/api/v1. Do not include video-synthesis, and do not use compatible-mode. Workspace hostnames (*.maas.aliyuncs.com) can fail TLS on some networks. Text-to-video model IDs are wan2.7-t2v or wan2.7-t2v-2026-06-12; resolutions are 720P / 1080P.',
   '供应商接口或模型不存在。Wan 的 Base URL 优先填 https://dashscope.aliyuncs.com/api/v1，不要带 video-synthesis，也不要使用 compatible-mode。文生视频模型 ID 应为 wan2.7-t2v 或 wan2.7-t2v-2026-06-12。': 'The Wan endpoint or model was not found. Prefer https://dashscope.aliyuncs.com/api/v1. Do not include video-synthesis and do not use compatible-mode. Text-to-video model IDs are wan2.7-t2v or wan2.7-t2v-2026-06-12.',
   '视频生成失败': 'Video generation failed',

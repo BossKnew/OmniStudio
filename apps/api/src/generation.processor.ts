@@ -13,6 +13,7 @@ import { PrismaService } from './prisma.service';
 import { StorageService } from './storage.service';
 import { safeErrorMessage } from './common';
 import { fileToDataUrl } from './image-data-url';
+import { QWEN_GENERATION_PATH, qwenImageApiRoot, qwenImageFailure, qwenImageRequestBody } from './qwen-image';
 import { MAX_IMAGE_BYTES } from './domain-constants';
 import { MAX_ERROR_BYTES, MAX_GENERATION_RESPONSE_BYTES, SafeHttpService } from './safe-http.service';
 import { securityConfig } from './security-config';
@@ -142,6 +143,7 @@ export function extractChatImageRefs(payload: unknown, extraText = ''): string[]
     if (typeof obj.b64_json === 'string') addChatImageRef(`data:image/png;base64,${obj.b64_json.replace(/\s/g, '')}`, refs, seen);
     if (typeof obj.url === 'string') addChatImageRef(obj.url, refs, seen);
     if (typeof obj.image_url === 'string') addChatImageRef(obj.image_url, refs, seen);
+    if (typeof obj.image === 'string') addChatImageRef(obj.image, refs, seen);
     for (const nested of [obj.image_url, obj.message, obj.delta, obj.content, obj.images, obj.data, obj.choices, obj.output]) {
       if (nested !== undefined) visit(nested, depth + 1);
     }
@@ -397,7 +399,7 @@ export class GenerationProcessor extends WorkerHost {
         model: {
           select: {
             upstreamModelId: true,
-            provider: { select: { baseUrl: true, encryptedApiKey: true, encryptedHeaders: true, timeoutSeconds: true } },
+            provider: { select: { baseUrl: true, encryptedApiKey: true, encryptedHeaders: true, timeoutSeconds: true, adapterKind: true } },
           },
         },
       },
@@ -414,15 +416,43 @@ export class GenerationProcessor extends WorkerHost {
     }
     try {
       const params = job.parameters as any;
-      const headers = providerRequestHeaders(this.crypto, job.model.provider);
-      const endpoint = job.mode === 'TEXT_TO_IMAGE' ? 'images/generations' : 'images/edits';
-      const requestParameters = providerImageParameters(job.model.upstreamModelId, job.prompt, params);
+      const provider = job.model.provider;
+      const headers = providerRequestHeaders(this.crypto, provider);
+      const isQwenImage = provider.adapterKind === 'qwen-image';
       const requestStaged: string[] = [];
+      let requestUrl: string;
       let body: BodyInit | UndiciFormData;
-      if (job.mode === 'TEXT_TO_IMAGE') {
+      if (isQwenImage) {
+        requestUrl = `${qwenImageApiRoot(provider.baseUrl)}${QWEN_GENERATION_PATH}`;
+        headers['Content-Type'] = 'application/json';
+        const sourceIds = Array.isArray(params.sourceAssetIds) ? params.sourceAssetIds : [];
+        if (job.mode === 'INPAINT') {
+          const error: any = new Error('千问生图不支持蒙版局部重绘');
+          error.noRetry = true;
+          error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: '千问生图（Qwen-Image）不支持蒙版局部重绘，请改用参考图编辑' };
+          throw error;
+        }
+        if (sourceIds.length > 3) {
+          const error: any = new Error('千问生图最多支持 3 张参考图');
+          error.noRetry = true;
+          error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: '千问生图（Qwen-Image）最多支持 3 张参考图，请减少参考图数量' };
+          throw error;
+        }
+        const reader = await this.jobReader(job.userId, job.user.role);
+        const imageDataUrls: string[] = [];
+        for (const assetId of sourceIds) {
+          const asset = await this.sourceAsset(reader, assetId);
+          imageDataUrls.push(await fileToDataUrl(this.storage.filePath(asset.objectKey), asset.mimeType));
+        }
+        body = JSON.stringify(qwenImageRequestBody(job.model.upstreamModelId, job.prompt, params, imageDataUrls));
+      } else if (job.mode === 'TEXT_TO_IMAGE') {
+        requestUrl = `${provider.baseUrl}/images/generations`;
+        const requestParameters = providerImageParameters(job.model.upstreamModelId, job.prompt, params);
         headers['Content-Type'] = 'application/json';
         body = JSON.stringify(requestParameters);
       } else {
+        requestUrl = `${provider.baseUrl}/images/edits`;
+        const requestParameters = providerImageParameters(job.model.upstreamModelId, job.prompt, params);
         const form = new UndiciFormData();
         for (const [key, value] of Object.entries(requestParameters)) form.set(key, String(value));
         const sourceIds = Array.isArray(params.sourceAssetIds) ? params.sourceAssetIds : [];
@@ -453,7 +483,7 @@ export class GenerationProcessor extends WorkerHost {
       let usedChatFallback = false;
       try {
         try {
-          response = await this.http.requestToFile(`${job.model.provider.baseUrl}/${endpoint}`, { method: 'POST', headers, body: body as any, redirectPolicy: 'same-origin', signal: AbortSignal.timeout(job.model.provider.timeoutSeconds * 1000) }, responsePath, MAX_GENERATION_RESPONSE_BYTES, MAX_ERROR_BYTES);
+          response = await this.http.requestToFile(requestUrl, { method: 'POST', headers, body: body as any, redirectPolicy: 'same-origin', signal: AbortSignal.timeout(provider.timeoutSeconds * 1000) }, responsePath, MAX_GENERATION_RESPONSE_BYTES, MAX_ERROR_BYTES);
         } catch (cause) {
           const error: any = new Error('供应商连接失败、响应过大或请求超时', { cause });
           error.providerConnection = true;
@@ -463,7 +493,7 @@ export class GenerationProcessor extends WorkerHost {
         await Promise.all(requestStaged.map((path) => this.storage.deleteStaged(path).catch(() => undefined)));
       }
       try {
-        if (!response.ok && providerErrorCode(response.body) === 'text_conversation_not_supported') {
+        if (!response.ok && !isQwenImage && providerErrorCode(response.body) === 'text_conversation_not_supported') {
           const fallback = await this.tryChatImageFallback({ id: job.id, userId: job.userId, prompt: job.prompt, user: job.user, model: job.model }, params, headers, responsePath);
           if (fallback) {
             responsePath = fallback.responsePath;
@@ -477,14 +507,14 @@ export class GenerationProcessor extends WorkerHost {
           this.logger.warn(`供应商拒绝任务 ${job.id}：HTTP ${response.status}，providerCode=${providerCode ?? 'unknown'}，responseBytes=${response.body?.length ?? 0}，fingerprint=${fingerprint}`);
           const error: any = new Error(`供应商返回 ${response.status}`);
           error.noRetry = response.status >= 400 && response.status < 500;
-          error.providerFailure = providerHttpFailure(response.status, response.body);
+          error.providerFailure = isQwenImage ? qwenImageFailure(response.status, response.body) : providerHttpFailure(response.status, response.body);
           throw error;
         }
         const contentType = response.headers.get('content-type') ?? '';
         if (!response.filePath) throw providerProtocolError(`供应商返回类型无效：${contentType || 'missing'}`);
         if (!usedChatFallback && !contentType.includes('application/json')) throw providerProtocolError(`供应商返回类型无效：${contentType || 'missing'}`);
         if (usedChatFallback && contentType && !/json|event-stream|text\/plain/i.test(contentType)) throw providerProtocolError(`供应商返回类型无效：${contentType}`);
-        const sources = usedChatFallback
+        const sources = usedChatFallback || isQwenImage
           ? await parseChatCompletionImages(response.filePath, params.count, this.storage)
           : await parseProviderImages(response.filePath, params.count, this.storage);
         try {

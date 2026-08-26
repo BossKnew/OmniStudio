@@ -7,12 +7,13 @@ import { parseBody, safeText } from './validation';
 import { z } from 'zod';
 import { normalizeProviderHeaders } from './provider-headers';
 import { providerRequestHeaders } from './provider-credentials';
-import { ACTIVE_JOB_STATUSES, isVideoAdapterKind } from './domain-constants';
+import { ACTIVE_JOB_STATUSES, PROVIDER_ADAPTER_KINDS, isVideoAdapterKind } from './domain-constants';
 import { createVideoAdapter, testModelsList } from './video-adapters';
 import { normalizeAdapterKind } from './provider-adapter';
+import { testQwenImageConnection } from './qwen-image';
 
 const headersSchema = z.record(z.string().max(128), z.string().max(4096));
-const adapterKindSchema = z.enum(['openai-images', 'openai-videos', 'seedance', 'wan']);
+const adapterKindSchema = z.enum(PROVIDER_ADAPTER_KINDS);
 const providerCreateSchema = z.object({
   name: safeText(64), baseUrl: z.string().max(2048), apiKey: z.string().min(1).max(16_384), headers: headersSchema.optional(),
   adapterKind: adapterKindSchema.optional(), timeoutSeconds: z.number().int().min(10).max(3600).optional(),
@@ -107,7 +108,9 @@ export class ProvidersController {
           timeoutSeconds: provider.timeoutSeconds,
           pollTimeoutSeconds: provider.pollTimeoutSeconds,
         }).testConnection()
-        : await testModelsList({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds });
+        : adapterKind === 'qwen-image'
+          ? await testQwenImageConnection({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds })
+          : await testModelsList({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds });
       const ok = Boolean(probed.ok);
       const error = ok ? undefined : probed.message ?? (probed.status ? providerTestError(probed.status) : '供应商连接失败');
       const result = { ok, status: probed.status, ...(ok ? {} : { error }), cooldownUntil };

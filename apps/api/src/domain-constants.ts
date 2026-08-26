@@ -6,9 +6,11 @@ export const VIDEO_POLL_INTERVAL_MS = 3_000;
 export const VIDEO_LOCK_DURATION_MS = 75 * 60 * 1000;
 
 export const IMAGE_ADAPTER_KIND = 'openai-images';
+export const IMAGE_ADAPTER_KINDS = ['openai-images', 'qwen-image'] as const;
+export type ImageAdapterKind = (typeof IMAGE_ADAPTER_KINDS)[number];
 export const VIDEO_ADAPTER_KINDS = ['openai-videos', 'seedance', 'wan'] as const;
 export type VideoAdapterKind = (typeof VIDEO_ADAPTER_KINDS)[number];
-export const PROVIDER_ADAPTER_KINDS = [IMAGE_ADAPTER_KIND, ...VIDEO_ADAPTER_KINDS] as const;
+export const PROVIDER_ADAPTER_KINDS = [...IMAGE_ADAPTER_KINDS, ...VIDEO_ADAPTER_KINDS] as const;
 export type ProviderAdapterKind = (typeof PROVIDER_ADAPTER_KINDS)[number];
 
 export const IMAGE_GENERATION_MODES = ['TEXT_TO_IMAGE', 'IMAGE_EDIT', 'INPAINT'] as const;

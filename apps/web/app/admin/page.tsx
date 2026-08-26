@@ -11,7 +11,7 @@ import { LanguageSwitcher, useI18n } from '@/lib/i18n';
 import Icon, { type IconName } from '@/components/Icon';
 
 type AdminView = 'users' | 'groups' | 'usage' | 'providers' | 'models' | 'labels' | 'prompt-polish' | 'security';
-type AdapterKind = 'openai-images' | 'openai-videos' | 'seedance' | 'wan';
+type AdapterKind = 'openai-images' | 'qwen-image' | 'openai-videos' | 'seedance' | 'wan';
 type Provider = { id: string; name: string; baseUrl: string; adapterKind?: AdapterKind; timeoutSeconds: number; pollTimeoutSeconds?: number; enabled: boolean; testCooldownUntil: string | null; lastTestOk: boolean | null };
 type UserGroup = { id: string; name: string; description: string | null; quotaWindow: string | null; quotaPoints?: number | null; _count: { users: number; models: number; assetShares?: number } };
 type AdminModel = { id: string; providerId: string; displayName: string; upstreamModelId: string; mediaKind?: 'IMAGE' | 'VIDEO'; allowedSizes: string[]; resolutionTiers?: Array<{ label: string; shortEdge: number }>; allowedRatios?: string[]; allowedQualities: string[]; allowedDurations?: number[]; supportsEdit: boolean; supportsInpaint: boolean; maxImages: number; maxInputImages: number; costPerUnit: number; pointMultipliers?: Record<string, number> | null; enabled: boolean; provider: { id: string; name: string; adapterKind?: AdapterKind }; allowedGroups: Array<{ groupId: string; group: { id: string; name: string } }> };
@@ -57,11 +57,12 @@ function adapterLabel(kind: string | undefined, t: (key: string) => string) {
   if (kind === 'openai-videos') return t('OpenAI Videos');
   if (kind === 'seedance') return t('Seedance（火山方舟）');
   if (kind === 'wan') return t('Wan（通义万相）');
+  if (kind === 'qwen-image') return t('千问生图（通义万相）');
   return t('OpenAI Images');
 }
 function adapterPlaceholder(kind: AdapterKind) {
   if (kind === 'seedance') return 'https://ark.cn-beijing.volces.com/api/v3';
-  if (kind === 'wan') return 'https://dashscope.aliyuncs.com/api/v1';
+  if (kind === 'wan' || kind === 'qwen-image') return 'https://dashscope.aliyuncs.com/api/v1';
   return 'https://api.openai.com/v1';
 }
 
@@ -515,6 +516,7 @@ export default function AdminPage() {
           <input className="field" required placeholder={t('名称')} value={providerForm.name} onChange={(event) => setProviderForm({ ...providerForm, name: event.target.value })} />
           <select className="field" value={providerForm.adapterKind} onChange={(event) => setProviderForm({ ...providerForm, adapterKind: event.target.value as AdapterKind })}>
             <option value="openai-images">{t('OpenAI Images')}</option>
+            <option value="qwen-image">{t('千问生图（通义万相）')}</option>
             <option value="openai-videos">{t('OpenAI Videos')}</option>
             <option value="seedance">{t('Seedance（火山方舟）')}</option>
             <option value="wan">{t('Wan（通义万相）')}</option>
@@ -524,6 +526,7 @@ export default function AdminPage() {
           <label>{t('生成超时（秒）')}<input className="field" type="number" min="10" max="3600" value={providerForm.timeoutSeconds} onChange={(event) => setProviderForm({ ...providerForm, timeoutSeconds: Number(event.target.value) })} /></label>
           {isVideoAdapter(providerForm.adapterKind) && <label>{t('任务等待超时（秒）')}<input className="field" type="number" min="10" max="3600" value={providerForm.pollTimeoutSeconds} onChange={(event) => setProviderForm({ ...providerForm, pollTimeoutSeconds: Number(event.target.value) })} /></label>}
           {providerForm.adapterKind === 'wan' && <p className="muted">{t('Wan 的 Base URL 优先填 https://dashscope.aliyuncs.com/api/v1。不要带 video-synthesis，也不要使用 compatible-mode。业务空间域名（*.maas.aliyuncs.com）在部分网络下会 TLS 握手失败。文生视频模型 ID 填 wan2.7-t2v 或 wan2.7-t2v-2026-06-12，分辨率填 720P / 1080P。')}</p>}
+          {providerForm.adapterKind === 'qwen-image' && <p className="muted">{t('千问生图（Qwen-Image）的 Base URL 填 https://dashscope.aliyuncs.com/api/v1，不要带 compatible-mode。模型 ID 例如 qwen-image-3.0、qwen-image-2.0-pro、qwen-image-plus。支持文生图与参考图编辑（最多 3 张参考图），不支持蒙版重绘；分辨率档位建议不超过 1K（总像素上限 2048×2048）。')}</p>}
           <div className="form-actions">{editingProviderId && <button className="button" type="button" onClick={cancelProviderEdit}>{t('取消')}</button>}<button className="button primary">{editingProviderId ? t('保存修改') : t('保存供应商')}</button></div>
         </form></section>
         <section className="card stack admin-panel"><h2>{t('已有供应商')}</h2>{providers.length === 0 && <p className="muted">{t('还没有供应商。')}</p>}{providers.map((provider) => <ProviderRow key={provider.id} provider={provider} now={clockNow} onEdit={beginProviderEdit} onTest={testProvider} onToggle={toggleProvider} onDelete={deleteProvider} />)}</section>

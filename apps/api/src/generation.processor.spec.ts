@@ -88,6 +88,12 @@ describe('image request compatibility', () => {
     expect(extractChatImageRefs({ data: [{ b64_json: 'YWJjZA==' }] })).toEqual(['data:image/png;base64,YWJjZA==']);
   });
 
+  it('extracts qwen-image result URLs from output.choices message content', () => {
+    expect(extractChatImageRefs({
+      output: { choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: [{ image: 'https://dashscope-result.oss-cn-shenzhen.aliyuncs.com/x.png', type: 'image' }] } }] },
+    })).toEqual(['https://dashscope-result.oss-cn-shenzhen.aliyuncs.com/x.png']);
+  });
+
   it('reduces provider errors to an irreversible fixed-size fingerprint', () => {
     const fingerprint = providerErrorFingerprint(Buffer.from(JSON.stringify({ error: { message: 'leaked sk-secret-value' } })));
     expect(fingerprint).toMatch(/^[A-Za-z0-9_-]{16}$/);

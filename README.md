@@ -7,7 +7,7 @@ OmniStudio is a self-hosted image and video generation workspace for teams: text
 ## ✨ Features
 
 - **Generation**: text-to-image, reference-image editing, masked inpainting, text-to-video, image-to-video
-- **Providers**: OpenAI Images-compatible APIs; OpenAI Videos, Seedance (Volcengine Ark), and Wan (DashScope) video adapters — gateways speaking the OpenAI Videos protocol can reuse that adapter
+- **Providers**: OpenAI Images-compatible APIs and Qwen-Image (DashScope 千问生图); OpenAI Videos, Seedance (Volcengine Ark), and Wan (DashScope) video adapters — gateways speaking the OpenAI Videos protocol can reuse that adapter
 - **Studio**: image/video mode switching, history, regenerate, retry, download, references, and mask drawing
 - **Assets**: conversations, asset library, group-shared references, thumbnails, storage quotas
 - **Administration**: user approval, user groups, model access control, per-group points-based generation quotas (model price × count / seconds, shared by images and video)
