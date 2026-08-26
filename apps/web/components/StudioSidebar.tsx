@@ -3,6 +3,7 @@ import type { ConversationSummary, StudioUser, UsageSnapshot } from '@/lib/studi
 import { formatStorageBytes } from '@/lib/format-bytes';
 import { useI18n } from '@/lib/i18n';
 import Icon from '@/components/Icon';
+import { APP_VERSION } from '@/lib/version';
 
 type StudioSidebarProps = {
   user: StudioUser;
@@ -113,6 +114,7 @@ export default function StudioSidebar({
         <Icon className="account-chevron" name="chevron-up" />
       </button>
     </div>
+    <p className="sidebar-version">OmniStudio v{APP_VERSION}</p>
     </div>
   </aside>;
 }

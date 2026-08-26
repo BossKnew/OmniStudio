@@ -3,6 +3,7 @@ import { useRouter } from '@/lib/router';
 import { api, json } from '@/lib/api';
 import { passwordError, passwordRequirement } from '@/lib/password-policy';
 import { LanguageSwitcher, useI18n } from '@/lib/i18n';
+import { APP_VERSION } from '@/lib/version';
 
 type LoginNext = 'AUTHENTICATED' | 'MFA_REQUIRED' | 'MFA_ENROLLMENT_REQUIRED' | 'PASSWORD_CHANGE_REQUIRED';
 type SetupInfo = { qrDataUrl: string; manualKey: string; issuer: string };
@@ -104,5 +105,5 @@ export default function LoginPage() {
       <button className="button primary" onClick={() => router.replace('/')}>{t('我已安全保存')}</button>
     </>}
     {message && <p role="alert" className={message.includes('成功') || message.toLowerCase().includes('success') ? 'success' : 'error'}>{message}</p>}
-  </section></main>;
+  </section><p className="version-footer">OmniStudio v{APP_VERSION}</p></main>;
 }
