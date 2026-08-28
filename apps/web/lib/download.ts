@@ -5,13 +5,15 @@ export type DownloadResult = {
   failed: string[];
 };
 
-export async function downloadFiles(items: DownloadItem[], onProgress?: (completed: number, total: number) => void): Promise<DownloadResult> {
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 60_000;
+
+export async function downloadFiles(items: DownloadItem[], onProgress?: (completed: number, total: number) => void, timeoutMs = DEFAULT_DOWNLOAD_TIMEOUT_MS): Promise<DownloadResult> {
   const failed: string[] = [];
   let completed = 0;
   onProgress?.(0, items.length);
   for (const item of items) {
     try {
-      const response = await fetch(item.url, { credentials: 'include', cache: 'no-store' });
+      const response = await fetch(item.url, { credentials: 'include', cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);

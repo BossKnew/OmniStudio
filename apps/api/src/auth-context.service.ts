@@ -41,6 +41,7 @@ export class AuthContextService {
         id: true, username: true, displayName: true, role: true, status: true, mustChangePwd: true,
         mfaCredential: { select: { userId: true } },
         groupMemberships: { select: { groupId: true } },
+        teamMemberships: { select: { teamId: true } },
       },
     });
     if (!user) return null;
@@ -54,6 +55,7 @@ export class AuthContextService {
       mfaEnabled: Boolean(user.mfaCredential),
       mfaRequired: user.role === 'ADMIN',
       groupIds: user.groupMemberships.map(({ groupId }) => groupId),
+      teamIds: user.teamMemberships.map(({ teamId }) => teamId),
     };
     const cached = await this.redis.client.eval(
       "if (redis.call('get', KEYS[2]) or '0') == ARGV[1] then redis.call('set', KEYS[1], ARGV[2], 'EX', ARGV[3]); return 1 else return 0 end",
@@ -68,6 +70,6 @@ export class AuthContextService {
     return context;
   }
 
-  private key(userId: string) { return `auth-context:v1:${userId}`; }
-  private versionKey(userId: string) { return `auth-context-version:v1:${userId}`; }
+  private key(userId: string) { return `auth-context:v2:${userId}`; }
+  private versionKey(userId: string) { return `auth-context-version:v2:${userId}`; }
 }

@@ -4,7 +4,7 @@ import type { PromptPolishService } from './prompt-polish.service';
 import type { RateLimitService } from './rate-limit.service';
 import type { AuthUser } from './common';
 
-const user: AuthUser = { id: 'user-1', username: 'u', displayName: null, role: 'USER', status: 'ACTIVE', mustChangePwd: false, mfaEnabled: false, mfaRequired: false, groupIds: [] };
+const user: AuthUser = { id: 'user-1', username: 'u', displayName: null, role: 'USER', status: 'ACTIVE', mustChangePwd: false, mfaEnabled: false, mfaRequired: false, groupIds: [], teamIds: [] };
 const admin: AuthUser = { ...user, role: 'ADMIN' };
 const CONFIG_ID = '11111111-1111-4111-8111-111111111111';
 

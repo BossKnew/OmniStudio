@@ -46,8 +46,9 @@ export class VideoGenerationProcessor extends WorkerHost {
         user: { select: { status: true, role: true } },
         model: {
           select: {
+            adapterKind: true,
             upstreamModelId: true,
-            provider: { select: { adapterKind: true, baseUrl: true, encryptedApiKey: true, encryptedHeaders: true, timeoutSeconds: true, pollTimeoutSeconds: true } },
+            provider: { select: { baseUrl: true, encryptedApiKey: true, encryptedHeaders: true, timeoutSeconds: true, pollTimeoutSeconds: true } },
           },
         },
       },
@@ -65,7 +66,7 @@ export class VideoGenerationProcessor extends WorkerHost {
     try {
       const params = (job.parameters && typeof job.parameters === 'object' && !Array.isArray(job.parameters) ? job.parameters : {}) as Record<string, unknown>;
       this.logger.log(`视频任务 ${job.id} 开始：生成超时 ${job.model.provider.timeoutSeconds}s，任务等待 ${job.model.provider.pollTimeoutSeconds}s`);
-      const adapter = createVideoAdapter(job.model.provider.adapterKind, {
+      const adapter = createVideoAdapter(job.model.adapterKind, {
         http: this.http,
         headers: providerRequestHeaders(this.crypto, job.model.provider),
         baseUrl: job.model.provider.baseUrl,
@@ -113,8 +114,8 @@ export class VideoGenerationProcessor extends WorkerHost {
   private async buildRequest(job: { id: string; userId: string; mode: string; prompt: string; user: { role: AuthUser['role'] } }, params: Record<string, unknown>, upstreamModelId: string): Promise<MediaGenerationRequest> {
     const sourceIds = Array.isArray(params.sourceAssetIds) ? params.sourceAssetIds.filter((id): id is string => typeof id === 'string') : [];
     const reader = job.user.role === 'ADMIN'
-      ? { id: job.userId, role: job.user.role, groupIds: [] as string[] }
-      : { id: job.userId, role: job.user.role, groupIds: (await this.prisma.userGroupMembership.findMany({ where: { userId: job.userId }, select: { groupId: true } })).map(({ groupId }) => groupId) };
+      ? { id: job.userId, role: job.user.role, teamIds: [] as string[] }
+      : { id: job.userId, role: job.user.role, teamIds: (await this.prisma.workTeamMembership.findMany({ where: { userId: job.userId }, select: { teamId: true } })).map(({ teamId }) => teamId) };
     const inputAssets = [];
     for (const assetId of sourceIds) {
       const asset = await this.prisma.asset.findFirst({
@@ -127,7 +128,7 @@ export class VideoGenerationProcessor extends WorkerHost {
     }
     return {
       mediaKind: 'VIDEO',
-      operation: job.mode === 'IMAGE_TO_VIDEO' ? 'IMAGE_TO_VIDEO' : 'TEXT_TO_VIDEO',
+      operation: job.mode === 'TEXT_TO_VIDEO' ? 'TEXT_TO_VIDEO' : 'IMAGE_TO_VIDEO',
       upstreamModelId,
       prompt: job.prompt,
       parameters: params,

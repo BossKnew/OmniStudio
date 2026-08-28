@@ -23,12 +23,13 @@ export class SessionGuard implements CanActivate {
     let session: { userId: string; csrfToken: string; stage?: 'FULL' | 'PASSWORD_CHANGE'; mfaAuthenticated?: boolean };
     try { session = JSON.parse(rawSession); } catch { throw new UnauthorizedException('登录已失效'); }
     const userId = session.userId;
-    const storedUser = this.authContext ? await this.authContext.get(userId) : await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, displayName: true, role: true, status: true, mustChangePwd: true, mfaCredential: { select: { userId: true } }, groupMemberships: { select: { groupId: true } } } });
+    const storedUser = this.authContext ? await this.authContext.get(userId) : await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, username: true, displayName: true, role: true, status: true, mustChangePwd: true, mfaCredential: { select: { userId: true } }, groupMemberships: { select: { groupId: true } }, teamMemberships: { select: { teamId: true } } } });
     const user = storedUser && 'mfaEnabled' in storedUser ? storedUser : storedUser ? {
       id: storedUser.id, username: storedUser.username, displayName: storedUser.displayName ?? storedUser.username,
       role: storedUser.role, status: storedUser.status, mustChangePwd: storedUser.mustChangePwd,
       mfaEnabled: Boolean(storedUser.mfaCredential), mfaRequired: storedUser.role === 'ADMIN',
       groupIds: storedUser.groupMemberships?.map(({ groupId }) => groupId) ?? [],
+      teamIds: storedUser.teamMemberships?.map(({ teamId }) => teamId) ?? [],
     } : null;
     if (!user || user.status !== 'ACTIVE') throw new UnauthorizedException('账号不可用');
     const mfaEnabled = user.mfaEnabled;

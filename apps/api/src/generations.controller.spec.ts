@@ -155,6 +155,70 @@ describe('GenerationsController retry', () => {
     expect(createQuota.reserveJobInTransaction).toHaveBeenCalledWith(transaction, user, 2, expect.objectContaining({ jobId: 'job-1', kind: 'SUBMIT', imageCount: 1, videoSeconds: 0 }));
   });
 
+  function videoCreateSetup(overrides: Record<string, unknown> = {}) {
+    const modelId = '11111111-1111-4111-8111-111111111111';
+    const transaction: any = {
+      conversation: { create: jest.fn().mockResolvedValue({ id: 'conversation-1' }) },
+      promptEntry: { upsert: jest.fn().mockResolvedValue({}) },
+      generationJob: { create: jest.fn().mockResolvedValue({ id: 'job-1', status: 'QUEUED' }) },
+      asset: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    };
+    const createPrisma: any = {
+      model: { findFirst: jest.fn().mockResolvedValue({
+        id: modelId, enabled: true, mediaKind: 'VIDEO', supportsGeneration: true, supportsEdit: true, supportsFirstLastFrame: true, supportsInpaint: false,
+        allowedSizes: ['16:9'], allowedQualities: ['720P'], allowedDurations: [5], maxImages: 1, maxInputImages: 2,
+        defaults: { size: '16:9', quality: '720P', count: 1, durationSeconds: 5 }, costPerUnit: 1, provider: { name: 'provider' },
+        ...overrides,
+      }) },
+      asset: { findMany: jest.fn().mockResolvedValue([]) },
+      conversation: { update: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn((callback: any) => callback(transaction)),
+    };
+    const createQuota: any = { reserveJobInTransaction: jest.fn().mockResolvedValue(undefined) };
+    return { modelId, transaction, createPrisma, createQuota, controller: new GenerationsController(createPrisma, queue, queue, limits, createQuota, assets, lifecycle, events) };
+  }
+
+  it('rejects first-last-frame video when the model does not support it', async () => {
+    const { modelId, controller } = videoCreateSetup({ supportsFirstLastFrame: false });
+    await expect(controller.create(user, { modelId, prompt: 'a pan', mode: 'FIRST_LAST_FRAME_TO_VIDEO', durationSeconds: 5, sourceAssetIds: ['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'] })).rejects.toThrow('模型不支持首尾帧');
+  });
+
+  it('requires both first and last frames', async () => {
+    const firstId = '22222222-2222-4222-8222-222222222222';
+    const { modelId, createPrisma, controller } = videoCreateSetup();
+    createPrisma.asset.findMany.mockResolvedValue([{ id: firstId }]);
+    await expect(controller.create(user, { modelId, prompt: 'a pan', mode: 'FIRST_LAST_FRAME_TO_VIDEO', durationSeconds: 5, sourceAssetIds: [firstId] })).rejects.toThrow('首尾帧必须提供首帧和尾帧');
+  });
+
+  it('keeps first and last frame order when creating a video job', async () => {
+    const firstId = '22222222-2222-4222-8222-222222222222';
+    const lastId = '33333333-3333-4333-8333-333333333333';
+    const { modelId, transaction, createPrisma, createQuota, controller } = videoCreateSetup();
+    createPrisma.asset.findMany.mockResolvedValue([{ id: firstId }, { id: lastId }]);
+
+    await controller.create(user, { modelId, prompt: 'a pan from dawn to dusk', mode: 'FIRST_LAST_FRAME_TO_VIDEO', durationSeconds: 5, sourceAssetIds: [lastId, firstId] });
+
+    expect(transaction.generationJob.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        mode: 'FIRST_LAST_FRAME_TO_VIDEO',
+        parameters: expect.objectContaining({ sourceAssetIds: [lastId, firstId] }),
+      }),
+    }));
+    expect(createQuota.reserveJobInTransaction).toHaveBeenCalledWith(transaction, user, 5, expect.objectContaining({ jobId: 'job-1', kind: 'SUBMIT', imageCount: 0, videoSeconds: 5 }));
+  });
+
+  it('allows the same image as both first and last frame', async () => {
+    const frameId = '22222222-2222-4222-8222-222222222222';
+    const { modelId, transaction, createPrisma, controller } = videoCreateSetup();
+    createPrisma.asset.findMany.mockResolvedValue([{ id: frameId }]);
+
+    await controller.create(user, { modelId, prompt: 'hold on the same frame', mode: 'FIRST_LAST_FRAME_TO_VIDEO', durationSeconds: 5, sourceAssetIds: [frameId, frameId] });
+
+    expect(transaction.generationJob.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ parameters: expect.objectContaining({ sourceAssetIds: [frameId, frameId] }) }),
+    }));
+  });
+
   it('uses the first ten characters of a Chinese prompt and the first four words of an English prompt', () => {
     expect(conversationTitleFromPrompt('雨夜霓虹街头的长镜头里')).toBe('雨夜霓虹街头的长镜头');
     expect(conversationTitleFromPrompt('短题')).toBe('短题');

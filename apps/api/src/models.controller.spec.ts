@@ -4,23 +4,32 @@ import { Prisma } from './generated/prisma/client';
 describe('ModelsController', () => {
   const currentModel = (overrides: Record<string, unknown> = {}) => ({
     id: 'model-1', providerId: '11111111-1111-4111-8111-111111111111', displayName: 'GI2', upstreamModelId: 'gpt-image-2',
+    adapterKind: 'openai-images', mediaKind: 'IMAGE',
     allowedSizes: ['1024x1024'], allowedQualities: ['standard'], defaults: { size: '1024x1024', quality: 'standard', count: 1 },
-    supportsGeneration: true, supportsEdit: false, supportsInpaint: false, maxImages: 1, maxInputImages: 1, enabled: true, sortOrder: 0,
+    supportsGeneration: true, supportsEdit: false, supportsInpaint: false, supportsFirstLastFrame: false, maxImages: 1, maxInputImages: 1, enabled: true, sortOrder: 0,
     ...overrides,
   });
 
-  const setup = (current = currentModel(), adapterKind = 'openai-images') => {
+  const setup = (current = currentModel()) => {
     const prisma: any = {
       model: {
         create: jest.fn().mockImplementation(({ data }) => ({ ...current, ...data })),
         findUniqueOrThrow: jest.fn().mockResolvedValue(current),
         update: jest.fn().mockImplementation(({ data }) => ({ ...current, ...data })),
       },
-      provider: { findUnique: jest.fn().mockResolvedValue({ adapterKind }) },
+      provider: { findUnique: jest.fn().mockResolvedValue({ id: current.providerId }) },
       auditLog: { create: jest.fn().mockResolvedValue({}) },
     };
     return { controller: new ModelsController(prisma), prisma };
   };
+
+  const imageCreate = (overrides: Record<string, unknown> = {}) => ({
+    providerId: '11111111-1111-4111-8111-111111111111',
+    displayName: 'GI2',
+    upstreamModelId: 'gpt-image-2',
+    adapterKind: 'openai-images',
+    ...overrides,
+  });
 
   it('moves an invalid stored default to the first newly allowed quality', async () => {
     const { controller, prisma } = setup();
@@ -50,12 +59,7 @@ describe('ModelsController', () => {
   it('creates a model with the default tiers and ratios when none are given', async () => {
     const { controller, prisma } = setup();
 
-    await controller.create({ id: 'admin-1' } as any, {
-      providerId: '11111111-1111-4111-8111-111111111111',
-      displayName: 'GI2',
-      upstreamModelId: 'gpt-image-2',
-      allowedQualities: ['auto'],
-    });
+    await controller.create({ id: 'admin-1' } as any, imageCreate({ allowedQualities: ['auto'] }));
 
     expect(prisma.model.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -89,14 +93,11 @@ describe('ModelsController', () => {
   it('derives a portrait default size when the first ratio is portrait', async () => {
     const { controller, prisma } = setup();
 
-    await controller.create({ id: 'admin-1' } as any, {
-      providerId: '11111111-1111-4111-8111-111111111111',
-      displayName: 'GI2',
-      upstreamModelId: 'gpt-image-2',
+    await controller.create({ id: 'admin-1' } as any, imageCreate({
       resolutionTiers: [{ label: '1K', shortEdge: 1024 }],
       allowedRatios: ['2:3'],
       allowedQualities: ['standard'],
-    });
+    }));
 
     expect(prisma.model.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -109,12 +110,13 @@ describe('ModelsController', () => {
 
 
   it('stores video resolution tiers and derives qualities from tier labels', async () => {
-    const { controller, prisma } = setup(currentModel(), 'wan');
+    const { controller, prisma } = setup();
 
     await controller.create({ id: 'admin-1' } as any, {
       providerId: '11111111-1111-4111-8111-111111111111',
       displayName: 'Wan',
       upstreamModelId: 'wan2.7-t2v',
+      adapterKind: 'wan',
       allowedSizes: ['16:9'],
       allowedDurations: [5],
       resolutionTiers: [{ label: '720P', shortEdge: 720 }, { label: '1080P', shortEdge: 1080 }],
@@ -133,14 +135,11 @@ describe('ModelsController', () => {
   it('keeps only valid point multipliers on create', async () => {
     const { controller, prisma } = setup();
 
-    await controller.create({ id: 'admin-1' } as any, {
-      providerId: '11111111-1111-4111-8111-111111111111',
-      displayName: 'GI2',
-      upstreamModelId: 'gpt-image-2',
+    await controller.create({ id: 'admin-1' } as any, imageCreate({
       allowedSizes: ['1024x1024'],
       allowedQualities: ['standard'],
       pointMultipliers: { '1024x1024': 2, '1024x1536': 0, 'bad': 101 },
-    });
+    }));
 
     expect(prisma.model.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ pointMultipliers: { '1024x1024': 2 } }),
@@ -160,15 +159,102 @@ describe('ModelsController', () => {
   it('omits point multipliers when not provided', async () => {
     const { controller, prisma } = setup();
 
-    await controller.create({ id: 'admin-1' } as any, {
-      providerId: '11111111-1111-4111-8111-111111111111',
-      displayName: 'GI2',
-      upstreamModelId: 'gpt-image-2',
+    await controller.create({ id: 'admin-1' } as any, imageCreate({
       allowedSizes: ['1024x1024'],
       allowedQualities: ['standard'],
-    });
+    }));
 
     const data = (prisma.model.create as jest.Mock).mock.calls[0][0].data;
     expect(data.pointMultipliers).toBeUndefined();
+  });
+
+  it('stores adapterKind on the model and derives mediaKind', async () => {
+    const { controller, prisma } = setup();
+
+    await controller.create({ id: 'admin-1' } as any, imageCreate({ adapterKind: 'qwen-image', allowedQualities: ['auto'] }));
+
+    expect(prisma.model.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ adapterKind: 'qwen-image', mediaKind: 'IMAGE' }),
+    }));
+  });
+
+  it('allows image and video models on the same provider', async () => {
+    const { controller, prisma } = setup();
+
+    await controller.create({ id: 'admin-1' } as any, imageCreate({ adapterKind: 'qwen-image', allowedQualities: ['auto'] }));
+    await controller.create({ id: 'admin-1' } as any, {
+      providerId: '11111111-1111-4111-8111-111111111111',
+      displayName: 'Wan',
+      upstreamModelId: 'wan2.7-t2v',
+      adapterKind: 'wan',
+      allowedDurations: [5],
+    });
+
+    const kinds = (prisma.model.create as jest.Mock).mock.calls.map((call) => call[0].data);
+    expect(kinds[0]).toEqual(expect.objectContaining({ adapterKind: 'qwen-image', mediaKind: 'IMAGE' }));
+    expect(kinds[1]).toEqual(expect.objectContaining({ adapterKind: 'wan', mediaKind: 'VIDEO' }));
+  });
+
+  it('rejects a mediaKind that does not match the adapter', async () => {
+    const { controller } = setup();
+
+    await expect(controller.create({ id: 'admin-1' } as any, imageCreate({
+      adapterKind: 'qwen-image',
+      mediaKind: 'VIDEO',
+      allowedQualities: ['auto'],
+    }))).rejects.toMatchObject({ message: '模型类型与适配器类型不匹配' });
+  });
+
+  it('keeps inpaint only on OpenAI Images models', async () => {
+    const { controller, prisma } = setup();
+
+    await controller.create({ id: 'admin-1' } as any, imageCreate({ adapterKind: 'openai-images', supportsInpaint: true, allowedQualities: ['auto'] }));
+    await controller.create({ id: 'admin-1' } as any, imageCreate({ adapterKind: 'qwen-image', supportsInpaint: true, allowedQualities: ['auto'] }));
+
+    const kinds = (prisma.model.create as jest.Mock).mock.calls.map((call) => call[0].data);
+    expect(kinds[0]).toEqual(expect.objectContaining({ adapterKind: 'openai-images', supportsInpaint: true }));
+    expect(kinds[1]).toEqual(expect.objectContaining({ adapterKind: 'qwen-image', supportsInpaint: false }));
+  });
+
+  it('stores first-last-frame support on video models and raises the reference floor', async () => {
+    const { controller, prisma } = setup();
+
+    await controller.create({ id: 'admin-1' } as any, {
+      providerId: '11111111-1111-4111-8111-111111111111',
+      displayName: 'Wan',
+      upstreamModelId: 'wan2.7-i2v',
+      adapterKind: 'wan',
+      allowedDurations: [5],
+      supportsFirstLastFrame: true,
+      maxInputImages: 1,
+    });
+
+    expect(prisma.model.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ supportsFirstLastFrame: true, maxInputImages: 2, mediaKind: 'VIDEO' }),
+    }));
+  });
+
+  it('ignores first-last-frame support on image models', async () => {
+    const { controller, prisma } = setup();
+
+    await controller.create({ id: 'admin-1' } as any, imageCreate({
+      supportsFirstLastFrame: true,
+      allowedQualities: ['auto'],
+    }));
+
+    expect(prisma.model.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ supportsFirstLastFrame: false, mediaKind: 'IMAGE' }),
+    }));
+  });
+
+  it('requires adapterKind when creating a model', async () => {
+    const { controller } = setup();
+
+    await expect(controller.create({ id: 'admin-1' } as any, {
+      providerId: '11111111-1111-4111-8111-111111111111',
+      displayName: 'GI2',
+      upstreamModelId: 'gpt-image-2',
+      allowedQualities: ['auto'],
+    })).rejects.toMatchObject({ response: expect.objectContaining({ errorCode: 'INVALID_INPUT' }) });
   });
 });

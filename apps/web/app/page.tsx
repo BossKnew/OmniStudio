@@ -27,9 +27,8 @@ export default function StudioPage() {
   const [models, setModels] = useState<StudioModel[]>([]);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationCursor, setConversationCursor] = useState<string | null>(null);
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [assetCursor, setAssetCursor] = useState<string | null>(null);
   const [assetTotal, setAssetTotal] = useState(0);
+  const [libraryEpoch, setLibraryEpoch] = useState(0);
   const [view, setView] = useState<StudioView>('studio');
   const [conversationId, setConversationId] = useState('');
   const [conversation, setConversation] = useState<ConversationDetail | null>(null);
@@ -61,8 +60,6 @@ export default function StudioPage() {
       if (collectionRevisionRef.current !== revision) return;
       setConversations(conversationPage.items);
       setConversationCursor(conversationPage.nextCursor);
-      setAssets(assetPage.items);
-      setAssetCursor(assetPage.nextCursor);
       setAssetTotal(assetPage.total ?? assetPage.items.length);
     })().finally(() => { if (collectionRefreshRef.current === refresh) collectionRefreshRef.current = null; });
     collectionRefreshRef.current = refresh;
@@ -97,6 +94,7 @@ export default function StudioPage() {
     try {
       const [usageSnapshot] = await Promise.all([api<UsageSnapshot>('/usage'), refreshCollections()]);
       setUsage(usageSnapshot);
+      if (job.status === 'SUCCEEDED') setLibraryEpoch((epoch) => epoch + 1);
       setSyncError('');
     } catch {
       setSyncError(t('任务状态已更新，但摘要同步失败。请刷新页面。'));
@@ -176,17 +174,15 @@ export default function StudioPage() {
       const deletedAssetIds = new Set(result.deletedAssetIds ?? []);
       const revision = ++collectionRevisionRef.current;
       setConversations((items) => items.filter((item) => item.id !== deleteTarget.id));
-      setAssets((items) => items.filter((asset) => !deletedAssetIds.has(asset.id)));
       setAssetTotal((total) => Math.max(0, total - deletedAssetIds.size));
       setReferences((current) => current.filter((reference) => reference.kind !== 'asset' || !deletedAssetIds.has(reference.asset.id)));
       if (viewer && deletedAssetIds.has(viewer.image.id)) setViewer(null);
       if (selectedConversationRef.current === deleteTarget.id) startNewCreation();
       setDeleteTarget(null);
+      setLibraryEpoch((epoch) => epoch + 1);
       try {
         const assetPage = await api<CursorPage<Asset>>('/assets');
         if (collectionRevisionRef.current === revision) {
-          setAssets(assetPage.items);
-          setAssetCursor(assetPage.nextCursor);
           setAssetTotal(assetPage.total ?? assetPage.items.length);
         }
         setSyncError('');
@@ -229,14 +225,6 @@ export default function StudioPage() {
     setConversationCursor(page.nextCursor);
   }
 
-  async function loadMoreAssets() {
-    if (!assetCursor) return;
-    const page = await api<CursorPage<Asset>>(`/assets?cursor=${encodeURIComponent(assetCursor)}`);
-    setAssets((current) => [...current, ...page.items]);
-    setAssetCursor(page.nextCursor);
-    setAssetTotal(page.total ?? assetTotal);
-  }
-
   async function loadOlderJobs() {
     if (!conversation?.nextJobCursor) return;
     const older = await api<ConversationDetail>(`/conversations/${conversation.id}?jobCursor=${encodeURIComponent(conversation.nextJobCursor)}`);
@@ -244,7 +232,6 @@ export default function StudioPage() {
   }
 
   function updateAssetNote(id: string, note: string | null) {
-    setAssets((items) => items.map((item) => item.id === id ? { ...item, note } : item));
     setConversation((current) => current ? {
       ...current,
       jobs: current.jobs.map((job) => ({ ...job, assets: job.assets.map((asset) => asset.id === id ? { ...asset, note } : asset) })),
@@ -252,17 +239,9 @@ export default function StudioPage() {
   }
 
   function removeAsset(asset: Asset) {
-    setAssets((items) => items.filter((item) => item.id !== asset.id));
+    setAssetTotal((total) => Math.max(0, total - 1));
     setReferences((current) => current.filter((reference) => reference.kind !== 'asset' || reference.asset.id !== asset.id));
     if (viewer?.image.id === asset.id) setViewer(null);
-  }
-
-  function updateAssetShares(id: string, groupIds: string[]) {
-    setAssets((items) => items.map((item) => item.id === id ? { ...item, sharedGroupIds: groupIds } : item));
-  }
-
-  function removeAssetShare(id: string, groupId: string) {
-    setAssets((items) => items.map((item) => item.id === id ? { ...item, sharedGroupIds: (item.sharedGroupIds ?? []).filter((value) => value !== groupId) } : item));
   }
 
   function selectReference(asset: Asset, generationPrompt?: string) {
@@ -312,7 +291,7 @@ export default function StudioPage() {
     <main className="main">
       <div className="workspace-topbar"><LanguageSwitcher /></div>
       {syncError && <p className="error" role="alert">{syncError}</p>}
-      {view === 'assets' ? <AssetLibrary assets={assets} hasMore={Boolean(assetCursor)} onLoadMore={loadMoreAssets} onStartCreation={startNewCreation} onOpenAsset={(asset) => setViewer({ image: toLightboxImage(asset, t), reference: asset })} onUseAsReference={(asset) => selectReference(asset)} onAssetNoteSaved={updateAssetNote} onAssetDeleted={removeAsset} onAssetSharesSaved={updateAssetShares} onAssetUnshared={removeAssetShare} isAdmin={user.role === 'ADMIN'} /> : <div className={`studio-workspace ${conversationId ? 'has-conversation' : ''}`}>
+      {view === 'assets' ? <AssetLibrary models={models} libraryEpoch={libraryEpoch} onStartCreation={startNewCreation} onOpenAsset={(asset) => setViewer({ image: toLightboxImage(asset, t), reference: asset.deletedAt ? undefined : asset })} onUseAsReference={(asset) => selectReference(asset)} onAssetNoteSaved={updateAssetNote} onAssetDeleted={removeAsset} onAssetRestored={() => setAssetTotal((total) => total + 1)} onAssetSharesSaved={() => undefined} onAssetUnshared={() => undefined} isAdmin={user.role === 'ADMIN'} /> : <div className={`studio-workspace ${conversationId ? 'has-conversation' : ''}`}>
         <StudioComposer models={models} optionLabels={optionLabels} conversationId={conversationId} references={references} onReferencesChange={setReferences} reusePreset={reusePreset} onReuseConsumed={() => setReusePreset(null)} onCreated={handleCreated} />
         {conversation && <JobHistory conversation={conversation} onLoadOlder={loadOlderJobs} referenceIds={references.filter((reference) => reference.kind === 'asset').map((reference) => reference.asset.id)} onDeleteConversation={() => setDeleteTarget(conversations.find((item) => item.id === conversation.id) ?? { id: conversation.id, title: conversation.title, _count: { jobs: conversation.jobs.length } })} onUseAsReference={selectReference} onOpenImage={(asset) => setViewer({ image: toLightboxImage(asset, t), reference: asset })} onRetry={retryGeneration} onReuse={reuseGeneration} onDownloadConversation={downloadConversation} />}
       </div>}
@@ -346,6 +325,6 @@ function toLightboxImage(asset: Asset, t: (key: string) => string): LightboxImag
     prompt: shared ? null : asset.generationPrompt,
     note: shared ? null : asset.note,
     sharedBy: asset.sharedBy?.displayName ?? null,
-    sharedGroupName: asset.group?.name ?? null,
+    sharedTeamName: asset.team?.name ?? null,
   };
 }

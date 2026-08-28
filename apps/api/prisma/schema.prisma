@@ -30,6 +30,7 @@ enum GenerationMode {
   INPAINT
   TEXT_TO_VIDEO
   IMAGE_TO_VIDEO
+  FIRST_LAST_FRAME_TO_VIDEO
 }
 
 enum JobStatus {
@@ -66,6 +67,7 @@ model User {
   usage            UserUsage?
   mfaCredential    MfaCredential?
   groupMemberships UserGroupMembership[]
+  teamMemberships  WorkTeamMembership[]
   assetShares      AssetShare[]          @relation("AssetShareActor")
 
   @@index([status])
@@ -135,7 +137,6 @@ model Provider {
   id                String    @id @default(uuid())
   name              String    @unique
   baseUrl           String
-  adapterKind       String    @default("openai-images")
   encryptedApiKey   String
   encryptedHeaders  String?
   timeoutSeconds    Int       @default(180)
@@ -154,10 +155,12 @@ model Model {
   providerId         String
   displayName        String
   upstreamModelId    String
+  adapterKind        String             @default("openai-images")
   mediaKind          MediaKind          @default(IMAGE)
-  supportsGeneration Boolean            @default(true)
-  supportsEdit       Boolean            @default(false)
-  supportsInpaint    Boolean            @default(false)
+  supportsGeneration     Boolean            @default(true)
+  supportsEdit           Boolean            @default(false)
+  supportsInpaint        Boolean            @default(false)
+  supportsFirstLastFrame Boolean            @default(false)
   allowedSizes       Json
   allowedQualities   Json
   allowedDurations   Json               @default("[]")
@@ -188,9 +191,29 @@ model UserGroup {
   quotaPoints       Int?
   createdAt   DateTime              @default(now())
   updatedAt   DateTime              @updatedAt
-  users       UserGroupMembership[]
-  models      ModelGroupAccess[]
+  users  UserGroupMembership[]
+  models ModelGroupAccess[]
+}
+
+model WorkTeam {
+  id          String                @id @default(uuid())
+  name        String                @unique
+  description String?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  users       WorkTeamMembership[]
   assetShares AssetShare[]
+}
+
+model WorkTeamMembership {
+  userId     String
+  teamId     String
+  assignedAt DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team       WorkTeam  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([userId, teamId])
+  @@index([teamId])
 }
 
 model UserGroupMembership {
@@ -288,6 +311,8 @@ model Asset {
   note         String?
   contentHash  String?
   deletedAt    DateTime?
+  purgeAfter   DateTime?
+  purgedAt     DateTime?
   createdAt    DateTime       @default(now())
   thumbnailForId String?      @unique
   user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -300,6 +325,8 @@ model Asset {
   @@index([userId, role, deletedAt])
   @@index([userId, role, contentHash])
   @@index([userId, deletedAt, createdAt, id])
+  @@index([userId, deletedAt, purgedAt, createdAt, id])
+  @@index([purgeAfter, purgedAt])
   @@index([jobId])
 }
 
@@ -324,15 +351,15 @@ model QuotaEvent {
 model AssetShare {
   id         String    @id @default(uuid())
   assetId    String
-  groupId    String
+  teamId     String
   sharedById String
   createdAt  DateTime  @default(now())
   asset      Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  group      UserGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  team       WorkTeam  @relation(fields: [teamId], references: [id], onDelete: Cascade)
   sharedBy   User      @relation("AssetShareActor", fields: [sharedById], references: [id], onDelete: Cascade)
 
-  @@unique([assetId, groupId])
-  @@index([groupId, createdAt, id])
+  @@unique([assetId, teamId])
+  @@index([teamId, createdAt, id])
   @@index([sharedById])
 }
 

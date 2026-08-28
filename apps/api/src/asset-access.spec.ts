@@ -1,33 +1,43 @@
 import { accessibleReferencedAssetWhere, accessibleSourceWhere, canReadAsset, canShareAsset, canUnshareAsset } from './asset-access';
 
-const owner = { id: 'owner-1', role: 'USER', groupIds: ['design'] } as any;
-const member = { id: 'member-1', role: 'USER', groupIds: ['design'] } as any;
-const outsider = { id: 'outsider-1', role: 'USER', groupIds: ['other'] } as any;
-const admin = { id: 'admin-1', role: 'ADMIN', groupIds: [] } as any;
+const owner = { id: 'owner-1', role: 'USER', groupIds: ['design'], teamIds: ['design'] } as any;
+const member = { id: 'member-1', role: 'USER', groupIds: [], teamIds: ['design'] } as any;
+const outsider = { id: 'outsider-1', role: 'USER', groupIds: ['design'], teamIds: ['other'] } as any;
+const admin = { id: 'admin-1', role: 'ADMIN', groupIds: [], teamIds: [] } as any;
 
 const owned = { userId: 'owner-1', role: 'OUTPUT', deletedAt: null, shares: [] };
-const shared = { userId: 'owner-1', role: 'OUTPUT', deletedAt: null, shares: [{ groupId: 'design' }] };
+const shared = { userId: 'owner-1', role: 'OUTPUT', deletedAt: null, shares: [{ teamId: 'design' }] };
 const mask = { userId: 'owner-1', role: 'MASK', deletedAt: null, shares: [] };
 const thumbnail = {
   userId: 'owner-1',
   role: 'THUMBNAIL',
   deletedAt: null,
   shares: [],
-  thumbnailFor: { userId: 'owner-1', role: 'OUTPUT', deletedAt: null, shares: [{ groupId: 'design' }] },
+  thumbnailFor: { userId: 'owner-1', role: 'OUTPUT', deletedAt: null, shares: [{ teamId: 'design' }] },
 };
 
-describe('asset group access', () => {
+describe('asset team access', () => {
   it('lets the owner read every role of their own undeleted asset', () => {
     expect(canReadAsset(owner, owned)).toBe(true);
     expect(canReadAsset(owner, mask)).toBe(true);
-    expect(canReadAsset(owner, { ...owned, deletedAt: new Date() })).toBe(false);
   });
 
-  it('lets current group members read shared library assets and their thumbnails', () => {
+  it('lets the owner read trashed files until they are purged', () => {
+    const trashed = { ...owned, deletedAt: new Date() };
+    expect(canReadAsset(owner, trashed)).toBe(true);
+    expect(canReadAsset(member, { ...shared, deletedAt: new Date() })).toBe(false);
+    expect(canReadAsset(owner, { ...trashed, purgedAt: new Date() })).toBe(false);
+  });
+
+  it('lets current team members read shared library assets and their thumbnails', () => {
     expect(canReadAsset(member, shared)).toBe(true);
     expect(canReadAsset(member, thumbnail)).toBe(true);
     expect(canReadAsset(outsider, shared)).toBe(false);
     expect(canReadAsset(member, mask)).toBe(false);
+  });
+
+  it('does not let user-group membership grant share access', () => {
+    expect(canReadAsset({ id: 'group-only', role: 'USER', groupIds: ['design'], teamIds: [] } as any, shared)).toBe(false);
   });
 
   it('lets administrators read already-shared assets but not private ones', () => {
@@ -55,7 +65,7 @@ describe('asset group access', () => {
       role: { in: ['UPLOAD', 'OUTPUT'] },
       OR: [
         { userId: 'member-1' },
-        { shares: { some: { groupId: { in: ['design'] } } } },
+        { shares: { some: { teamId: { in: ['design'] } } } },
       ],
     });
     expect(accessibleSourceWhere(admin)).toEqual({
@@ -70,7 +80,7 @@ describe('asset group access', () => {
       deletedAt: null,
       OR: [
         { userId: 'member-1' },
-        { role: { in: ['UPLOAD', 'OUTPUT'] }, shares: { some: { groupId: { in: ['design'] } } } },
+        { role: { in: ['UPLOAD', 'OUTPUT'] }, shares: { some: { teamId: { in: ['design'] } } } },
       ],
     });
   });

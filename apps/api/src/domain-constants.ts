@@ -4,17 +4,18 @@ export const THUMBNAIL_MAX_EDGE = 512;
 export const THUMBNAIL_QUALITY = 82;
 export const VIDEO_POLL_INTERVAL_MS = 3_000;
 export const VIDEO_LOCK_DURATION_MS = 75 * 60 * 1000;
+export const IMAGE_LOCK_DURATION_MS = VIDEO_LOCK_DURATION_MS;
 
 export const IMAGE_ADAPTER_KIND = 'openai-images';
-export const IMAGE_ADAPTER_KINDS = ['openai-images', 'qwen-image'] as const;
+export const IMAGE_ADAPTER_KINDS = ['openai-images', 'qwen-image', 'nano-banana', 'seedream', 'midjourney', 'flux', 'runway-images'] as const;
 export type ImageAdapterKind = (typeof IMAGE_ADAPTER_KINDS)[number];
-export const VIDEO_ADAPTER_KINDS = ['openai-videos', 'seedance', 'wan'] as const;
+export const VIDEO_ADAPTER_KINDS = ['openai-videos', 'seedance', 'wan', 'veo', 'minimax', 'runway', 'flux-video'] as const;
 export type VideoAdapterKind = (typeof VIDEO_ADAPTER_KINDS)[number];
 export const PROVIDER_ADAPTER_KINDS = [...IMAGE_ADAPTER_KINDS, ...VIDEO_ADAPTER_KINDS] as const;
 export type ProviderAdapterKind = (typeof PROVIDER_ADAPTER_KINDS)[number];
 
 export const IMAGE_GENERATION_MODES = ['TEXT_TO_IMAGE', 'IMAGE_EDIT', 'INPAINT'] as const;
-export const VIDEO_GENERATION_MODES = ['TEXT_TO_VIDEO', 'IMAGE_TO_VIDEO'] as const;
+export const VIDEO_GENERATION_MODES = ['TEXT_TO_VIDEO', 'IMAGE_TO_VIDEO', 'FIRST_LAST_FRAME_TO_VIDEO'] as const;
 export type VideoGenerationMode = (typeof VIDEO_GENERATION_MODES)[number];
 
 export function isVideoAdapterKind(kind: string): kind is VideoAdapterKind {
@@ -27,6 +28,10 @@ export function isVideoGenerationMode(mode: string): mode is VideoGenerationMode
 
 export function mediaKindForAdapter(kind: string): 'IMAGE' | 'VIDEO' {
   return isVideoAdapterKind(kind) ? 'VIDEO' : 'IMAGE';
+}
+
+export function isProviderAdapterKind(kind: string): kind is ProviderAdapterKind {
+  return (PROVIDER_ADAPTER_KINDS as readonly string[]).includes(kind);
 }
 
 export const ACTIVE_JOB_STATUSES = ['QUEUED', 'RUNNING'] as const;

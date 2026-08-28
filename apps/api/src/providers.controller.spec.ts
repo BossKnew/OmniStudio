@@ -9,6 +9,7 @@ describe('ProvidersController', () => {
   beforeEach(() => {
     prisma = {
       provider: { updateMany: jest.fn(), findUniqueOrThrow: jest.fn(), update: jest.fn() },
+      model: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn(),
     };
     controller = new ProvidersController(prisma, { decrypt: jest.fn(() => 'secret'), encrypt: jest.fn((value) => `encrypted:${value}`) } as any);
@@ -72,5 +73,31 @@ describe('ProvidersController', () => {
       name: 'unsafe', baseUrl: 'https://api.example.com/v1', apiKey: 'secret', headers: { Host: 'metadata.internal' },
     })).rejects.toBeInstanceOf(HttpException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects adapterKind on the provider payload', async () => {
+    await expect(controller.create({ id: 'admin-1' } as any, {
+      name: 'typed', baseUrl: 'https://api.example.com/v1', apiKey: 'secret', adapterKind: 'openai-images',
+    })).rejects.toBeInstanceOf(HttpException);
+  });
+
+  it('probes each distinct model adapter when testing a provider', async () => {
+    prisma.provider.updateMany.mockResolvedValue({ count: 1 });
+    prisma.provider.findUniqueOrThrow.mockResolvedValue({
+      id: 'provider-1', baseUrl: 'https://dashscope.aliyuncs.com/api/v1', encryptedApiKey: 'encrypted', encryptedHeaders: null, timeoutSeconds: 30, pollTimeoutSeconds: 900,
+    });
+    prisma.provider.update.mockResolvedValue({});
+    prisma.model.findMany.mockResolvedValue([{ adapterKind: 'qwen-image' }, { adapterKind: 'wan' }]);
+    const http = {
+      request: jest.fn().mockResolvedValue({ ok: true, status: 404, headers: new Headers({ 'content-type': 'application/json' }), body: Buffer.from('{}') }),
+    };
+    controller = new ProvidersController(prisma, { decrypt: jest.fn(() => 'secret') } as any, http as any);
+
+    const result = await controller.test('provider-1');
+
+    expect(result).toMatchObject({ ok: true, status: 404 });
+    const urls = http.request.mock.calls.map((call: unknown[]) => String(call[0]));
+    expect(urls.some((url: string) => url.endsWith('/tasks/0'))).toBe(true);
+    expect(urls.filter((url: string) => url.endsWith('/tasks/0'))).toHaveLength(2);
   });
 });

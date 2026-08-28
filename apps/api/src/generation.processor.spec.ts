@@ -94,6 +94,12 @@ describe('image request compatibility', () => {
     })).toEqual(['https://dashscope-result.oss-cn-shenzhen.aliyuncs.com/x.png']);
   });
 
+  it('extracts Gemini generateContent inlineData images', () => {
+    expect(extractChatImageRefs({
+      candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'YWJj' } }] } }],
+    })).toEqual(['data:image/png;base64,YWJj']);
+  });
+
   it('reduces provider errors to an irreversible fixed-size fingerprint', () => {
     const fingerprint = providerErrorFingerprint(Buffer.from(JSON.stringify({ error: { message: 'leaked sk-secret-value' } })));
     expect(fingerprint).toMatch(/^[A-Za-z0-9_-]{16}$/);
@@ -197,7 +203,7 @@ describe('GenerationProcessor mask lifecycle', () => {
     const prisma: any = {
       generationJob: { findUnique: jest.fn().mockResolvedValueOnce(job).mockResolvedValueOnce({ status: 'RUNNING' }), update: jest.fn().mockResolvedValue({}), updateMany: jest.fn() },
       user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
-      userGroupMembership: { findMany: jest.fn().mockResolvedValue([]) },
+      workTeamMembership: { findMany: jest.fn().mockResolvedValue([]) },
       asset: {
           findFirst: jest.fn()
             .mockResolvedValueOnce({ id: 'source-1', objectKey: sourceStored.objectKey, mimeType: 'image/png', originalName: 'source.png' })
@@ -278,7 +284,7 @@ describe('GenerationProcessor mask lifecycle', () => {
     const prisma: any = {
       generationJob: { findUnique: jest.fn().mockResolvedValueOnce(job).mockResolvedValueOnce({ status: 'RUNNING' }), update: jest.fn().mockResolvedValue({}), updateMany: jest.fn() },
       user: { findUnique: jest.fn().mockResolvedValue({ status: 'ACTIVE' }) },
-      userGroupMembership: { findMany: jest.fn().mockResolvedValue([]) },
+      workTeamMembership: { findMany: jest.fn().mockResolvedValue([]) },
       asset: { findFirst: jest.fn().mockResolvedValue({ id: 'source-1', objectKey: sourceStored.objectKey, mimeType: 'image/png', originalName: 'source.png' }) },
     };
     const http: any = {

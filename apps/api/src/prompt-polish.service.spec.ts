@@ -10,7 +10,7 @@ import type { SafeHttpService } from './safe-http.service';
 import type { StorageService } from './storage.service';
 import type { AuthUser } from './common';
 
-const user: AuthUser = { id: 'user-1', username: 'u', displayName: null, role: 'USER', status: 'ACTIVE', mustChangePwd: false, mfaEnabled: false, mfaRequired: false, groupIds: [] };
+const user: AuthUser = { id: 'user-1', username: 'u', displayName: null, role: 'USER', status: 'ACTIVE', mustChangePwd: false, mfaEnabled: false, mfaRequired: false, groupIds: [], teamIds: [] };
 
 type PromptPolishSettingMock = {
   promptPolishSetting: {

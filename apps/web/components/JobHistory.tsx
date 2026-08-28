@@ -106,6 +106,7 @@ function modeLabel(mode: string, t: (key: string) => string) {
   if (mode === 'INPAINT') return t('局部重绘');
   if (mode === 'TEXT_TO_VIDEO') return t('文生视频');
   if (mode === 'IMAGE_TO_VIDEO') return t('图生视频');
+  if (mode === 'FIRST_LAST_FRAME_TO_VIDEO') return t('首尾帧');
   return t('文生图');
 }
 
