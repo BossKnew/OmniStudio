@@ -2,16 +2,16 @@
 
 English | [简体中文](README_zh.md)
 
-OmniStudio is a self-hosted image and video generation workspace for teams: text-to-image, full-image editing, masked inpainting, text-to-video, image-to-video, and first-and-last-frame video, with a built-in asset library, quota management, user groups, work teams, and model access control.
+OmniStudio is a self-hosted image and video generation workspace for teams. It covers text-to-image, reference-image editing, masked inpainting, text-to-video, image-to-video, and first-and-last-frame video, with an asset library, recycle bin, points quotas, user groups, work teams, and per-model access control.
 
 ## ✨ Features
 
-- **Generation**: text-to-image, reference-image editing, masked inpainting, text-to-video, image-to-video, first-and-last-frame video
-- **Providers**: credentials and a Base URL only. Each model picks a media type and adapter — OpenAI Images, Qwen/Wan, Nano Banana, Seedream, Midjourney, Flux, or Runway for images; Sora, Seedance, Wan/HappyHorse, Veo, MiniMax, Runway, or Flux for video. Gateways speaking the OpenAI Videos protocol can reuse that adapter. One Google AI Studio key can host both Nano Banana and Veo; one Volcengine Ark key can host Seedream and Seedance; one BFL key can host Flux image and video; one Runway key can host Runway image and video. Midjourney uses a midjourney-proxy-compatible gateway (there is no official Midjourney API).
-- **Studio**: image/video mode switching, history, regenerate, retry, download, references, first/last frames, and mask drawing
-- **Assets**: conversations, asset library (filter by type, source, model, date, and notes/prompts), work-team-shared references, thumbnails, storage quotas
-- **Administration**: user approval, user groups for model access, work teams for asset sharing, per-group points-based generation quotas (model price × count / seconds, shared by images and video)
-- **Prompt polishing**: text-to-image, image-edit, and text-to-video, with multiple configurable providers
+- **Generation**: text-to-image, reference-image editing, masked inpainting, text-to-video, image-to-video, and first-and-last-frame video. Admins enable image-to-video and first/last frames per model. Each model has resolution tiers, aspect ratios, duration, quality, a points price, and optional per-tier multipliers.
+- **Providers**: a provider stores credentials and a Base URL only. Each model picks image or video, then an adapter — OpenAI Images, Qwen/Wan, Nano Banana, Seedream, Midjourney, Flux, or Runway for images; Sora, Seedance, Wan/HappyHorse, Veo, MiniMax, Runway, or Flux for video. Gateways speaking the OpenAI Videos protocol can reuse that adapter. One Google AI Studio key can host Nano Banana and Veo; one Volcengine Ark key can host Seedream and Seedance; one BFL key can host Flux image and video; one Runway key can host Runway image and video. Midjourney uses a midjourney-proxy-compatible gateway (there is no official Midjourney API).
+- **Studio**: image/video switch, conversations, regenerate, retry, playback, download (current session or selected library items), references, first/last-frame slots, mask drawing, prompt history and favorites, and prompt polish.
+- **Assets**: conversations, asset library (filter by type, source, model, date, and notes/prompts), work-team sharing, recycle bin with restore, thumbnails, storage quotas. Deleted files still count against storage until they expire.
+- **Administration**: user approval, registration and session settings, user groups (model access and a sliding-window points quota per person), work teams (sharing only), usage ledger, providers and models, display labels for size/ratio/quality/duration, prompt-polish providers, recycle-bin retention (default 30 days).
+- **Prompt polishing**: text-to-image, image-edit, and text-to-video. Admins can configure several providers; only one can be enabled at a time.
 - **Security**: mandatory admin MFA, encrypted API keys and MFA secrets, SSRF protection, rate limiting, CSRF protection
 - **UI**: English and Chinese
 
