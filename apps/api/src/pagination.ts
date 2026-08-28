@@ -26,7 +26,7 @@ export function decodeCursor(raw: unknown): PageCursor | undefined {
   }
 }
 
-export function cursorWhere(field: 'createdAt' | 'updatedAt' | 'lastUsedAt', cursor?: PageCursor) {
+export function cursorWhere(field: 'createdAt' | 'updatedAt' | 'lastUsedAt' | 'deletedAt', cursor?: PageCursor) {
   if (!cursor) return {};
   return { OR: [
     { [field]: { lt: cursor.timestamp } },

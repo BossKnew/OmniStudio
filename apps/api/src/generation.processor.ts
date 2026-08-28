@@ -14,9 +14,15 @@ import { StorageService } from './storage.service';
 import { safeErrorMessage } from './common';
 import { fileToDataUrl } from './image-data-url';
 import { QWEN_GENERATION_PATH, qwenImageApiRoot, qwenImageFailure, qwenImageRequestBody } from './qwen-image';
-import { MAX_IMAGE_BYTES } from './domain-constants';
+import { bananaApiRoot, bananaHeaders, bananaImageFailure, bananaRequestBody } from './nano-banana';
+import { seedreamApiRoot, seedreamFailure, seedreamRequestBody } from './seedream';
+import { fluxEndpointSlug, fluxRequestBody, pollFluxUntilReady, submitFluxRequest } from './flux';
+import { mjPrompt, mjRequestBody, pollMidjourneyTask, submitMidjourneyImagine } from './midjourney';
+import { pollRunwayImageTask, runwayImageRequestBody, submitRunwayImage } from './runway-image';
+import { IMAGE_LOCK_DURATION_MS, MAX_IMAGE_BYTES } from './domain-constants';
 import { MAX_ERROR_BYTES, MAX_GENERATION_RESPONSE_BYTES, SafeHttpService } from './safe-http.service';
 import { securityConfig } from './security-config';
+import { mapProviderRequestError, type VideoAdapterDeps } from './provider-adapter';
 import { AssetLifecycleService } from './asset-lifecycle.service';
 import { providerRequestHeaders } from './provider-credentials';
 import { GenerationLifecycleService } from './generation-lifecycle.service';
@@ -144,7 +150,20 @@ export function extractChatImageRefs(payload: unknown, extraText = ''): string[]
     if (typeof obj.url === 'string') addChatImageRef(obj.url, refs, seen);
     if (typeof obj.image_url === 'string') addChatImageRef(obj.image_url, refs, seen);
     if (typeof obj.image === 'string') addChatImageRef(obj.image, refs, seen);
-    for (const nested of [obj.image_url, obj.message, obj.delta, obj.content, obj.images, obj.data, obj.choices, obj.output]) {
+    const inline = obj.inlineData && typeof obj.inlineData === 'object' && !Array.isArray(obj.inlineData)
+      ? obj.inlineData as Record<string, unknown>
+      : obj.inline_data && typeof obj.inline_data === 'object' && !Array.isArray(obj.inline_data)
+        ? obj.inline_data as Record<string, unknown>
+        : undefined;
+    if (inline && typeof inline.data === 'string') {
+      const mime = typeof inline.mimeType === 'string' ? inline.mimeType : typeof inline.mime_type === 'string' ? inline.mime_type : 'image/png';
+      addChatImageRef(`data:${mime};base64,${inline.data.replace(/\s/g, '')}`, refs, seen);
+    }
+    if ((obj.type === 'image' || obj.type === 'output_image') && typeof obj.data === 'string' && !obj.data.startsWith('data:') && !/^https?:\/\//i.test(obj.data)) {
+      const mime = typeof obj.mimeType === 'string' ? obj.mimeType : typeof obj.mime_type === 'string' ? obj.mime_type : 'image/png';
+      addChatImageRef(`data:${mime};base64,${obj.data.replace(/\s/g, '')}`, refs, seen);
+    }
+    for (const nested of [obj.image_url, obj.message, obj.delta, obj.content, obj.images, obj.data, obj.choices, obj.output, obj.candidates, obj.parts, obj.steps]) {
       if (nested !== undefined) visit(nested, depth + 1);
     }
   };
@@ -373,7 +392,11 @@ export async function parseProviderImages(jsonPath: string, count: number, stora
   }
 }
 
-@Processor('image-generation', { concurrency: securityConfig.workerConcurrency() })
+@Processor('image-generation', {
+  concurrency: securityConfig.workerConcurrency(),
+  lockDuration: IMAGE_LOCK_DURATION_MS,
+  stalledInterval: 60_000,
+})
 export class GenerationProcessor extends WorkerHost {
   private readonly logger = new Logger(GenerationProcessor.name);
   constructor(
@@ -398,8 +421,9 @@ export class GenerationProcessor extends WorkerHost {
         user: { select: { status: true, role: true } },
         model: {
           select: {
+            adapterKind: true,
             upstreamModelId: true,
-            provider: { select: { baseUrl: true, encryptedApiKey: true, encryptedHeaders: true, timeoutSeconds: true, adapterKind: true } },
+            provider: { select: { baseUrl: true, encryptedApiKey: true, encryptedHeaders: true, timeoutSeconds: true, pollTimeoutSeconds: true } },
           },
         },
       },
@@ -418,24 +442,94 @@ export class GenerationProcessor extends WorkerHost {
       const params = job.parameters as any;
       const provider = job.model.provider;
       const headers = providerRequestHeaders(this.crypto, provider);
-      const isQwenImage = provider.adapterKind === 'qwen-image';
+      const isQwenImage = job.model.adapterKind === 'qwen-image';
+      const isNanoBanana = job.model.adapterKind === 'nano-banana';
+      const isSeedream = job.model.adapterKind === 'seedream';
+      const isFlux = job.model.adapterKind === 'flux';
+      const isMidjourney = job.model.adapterKind === 'midjourney';
+      const isRunwayImages = job.model.adapterKind === 'runway-images';
+      if (isFlux || isMidjourney || isRunwayImages) {
+        const persisted = await this.runAsyncImageAdapter({
+          id: job.id,
+          userId: job.userId,
+          mode: job.mode,
+          prompt: job.prompt,
+          user: job.user,
+          model: job.model,
+        }, params, headers, isFlux ? 'flux' : isMidjourney ? 'midjourney' : 'runway-images');
+        if (!persisted) return;
+        const completed = await this.lifecycle.finish(job.userId, job.id, 'SUCCEEDED');
+        if (!completed) await this.assets.removeJobOutputs(job.userId, job.id);
+        if (params.maskAssetId) {
+          try { await this.assets.removeMask(job.userId, params.maskAssetId); }
+          catch (error) { this.logger.warn(`任务 ${job.id} 已成功，但遮罩清理失败：${safeErrorMessage(error)}`); }
+        }
+        return;
+      }
       const requestStaged: string[] = [];
       let requestUrl: string;
       let body: BodyInit | UndiciFormData;
-      if (isQwenImage) {
+      if (isNanoBanana) {
+        Object.assign(headers, bananaHeaders(headers, { 'Content-Type': 'application/json' }));
+        requestUrl = `${bananaApiRoot(provider.baseUrl)}/models/${job.model.upstreamModelId}:generateContent`;
+        const sourceIds = Array.isArray(params.sourceAssetIds) ? params.sourceAssetIds : [];
+        if (job.mode === 'INPAINT') {
+          const error: any = new Error('Nano Banana 不支持蒙版局部重绘');
+          error.noRetry = true;
+          error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: 'Nano Banana 不支持蒙版局部重绘，请改用参考图编辑' };
+          throw error;
+        }
+        if (sourceIds.length > 14) {
+          const error: any = new Error('Nano Banana 最多支持 14 张参考图');
+          error.noRetry = true;
+          error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: 'Nano Banana 最多支持 14 张参考图，请减少参考图数量' };
+          throw error;
+        }
+        const reader = await this.jobReader(job.userId, job.user.role);
+        const images: Array<{ mimeType: string; data: string }> = [];
+        for (const assetId of sourceIds) {
+          const asset = await this.sourceAsset(reader, assetId);
+          const mime = asset.mimeType === 'image/jpeg' || asset.mimeType === 'image/webp' ? asset.mimeType : 'image/png';
+          images.push({ mimeType: mime, data: (await readFile(this.storage.filePath(asset.objectKey))).toString('base64') });
+        }
+        body = JSON.stringify(bananaRequestBody(job.prompt, params, images));
+      } else if (isSeedream) {
+        requestUrl = `${seedreamApiRoot(provider.baseUrl)}/images/generations`;
+        headers['Content-Type'] = 'application/json';
+        const sourceIds = Array.isArray(params.sourceAssetIds) ? params.sourceAssetIds : [];
+        if (job.mode === 'INPAINT') {
+          const error: any = new Error('Seedream 不支持蒙版局部重绘');
+          error.noRetry = true;
+          error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: 'Seedream 不支持蒙版局部重绘，请改用参考图编辑' };
+          throw error;
+        }
+        if (sourceIds.length > 14) {
+          const error: any = new Error('Seedream 最多支持 14 张参考图');
+          error.noRetry = true;
+          error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: 'Seedream 最多支持 14 张参考图，请减少参考图数量' };
+          throw error;
+        }
+        const reader = await this.jobReader(job.userId, job.user.role);
+        const imageDataUrls: string[] = [];
+        for (const assetId of sourceIds) {
+          const asset = await this.sourceAsset(reader, assetId);
+          imageDataUrls.push(await fileToDataUrl(this.storage.filePath(asset.objectKey), asset.mimeType));
+        }
+        body = JSON.stringify(seedreamRequestBody(job.model.upstreamModelId, job.prompt, params, imageDataUrls));
+      } else if (isQwenImage) {
         requestUrl = `${qwenImageApiRoot(provider.baseUrl)}${QWEN_GENERATION_PATH}`;
         headers['Content-Type'] = 'application/json';
         const sourceIds = Array.isArray(params.sourceAssetIds) ? params.sourceAssetIds : [];
         if (job.mode === 'INPAINT') {
-          const error: any = new Error('千问生图不支持蒙版局部重绘');
+          const error: any = new Error('Qwen/Wan 不支持蒙版局部重绘');
           error.noRetry = true;
-          error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: '千问生图（Qwen-Image）不支持蒙版局部重绘，请改用参考图编辑' };
+          error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: 'Qwen/Wan 不支持蒙版局部重绘，请改用参考图编辑' };
           throw error;
         }
         if (sourceIds.length > 3) {
-          const error: any = new Error('千问生图最多支持 3 张参考图');
+          const error: any = new Error('Qwen/Wan 最多支持 3 张参考图');
           error.noRetry = true;
-          error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: '千问生图（Qwen-Image）最多支持 3 张参考图，请减少参考图数量' };
+          error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: 'Qwen/Wan 最多支持 3 张参考图，请减少参考图数量' };
           throw error;
         }
         const reader = await this.jobReader(job.userId, job.user.role);
@@ -493,7 +587,7 @@ export class GenerationProcessor extends WorkerHost {
         await Promise.all(requestStaged.map((path) => this.storage.deleteStaged(path).catch(() => undefined)));
       }
       try {
-        if (!response.ok && !isQwenImage && providerErrorCode(response.body) === 'text_conversation_not_supported') {
+        if (!response.ok && !isQwenImage && !isNanoBanana && !isSeedream && providerErrorCode(response.body) === 'text_conversation_not_supported') {
           const fallback = await this.tryChatImageFallback({ id: job.id, userId: job.userId, prompt: job.prompt, user: job.user, model: job.model }, params, headers, responsePath);
           if (fallback) {
             responsePath = fallback.responsePath;
@@ -507,14 +601,14 @@ export class GenerationProcessor extends WorkerHost {
           this.logger.warn(`供应商拒绝任务 ${job.id}：HTTP ${response.status}，providerCode=${providerCode ?? 'unknown'}，responseBytes=${response.body?.length ?? 0}，fingerprint=${fingerprint}`);
           const error: any = new Error(`供应商返回 ${response.status}`);
           error.noRetry = response.status >= 400 && response.status < 500;
-          error.providerFailure = isQwenImage ? qwenImageFailure(response.status, response.body) : providerHttpFailure(response.status, response.body);
+          error.providerFailure = isSeedream ? seedreamFailure(response.status, response.body) : isNanoBanana ? bananaImageFailure(response.status, response.body) : isQwenImage ? qwenImageFailure(response.status, response.body) : providerHttpFailure(response.status, response.body);
           throw error;
         }
         const contentType = response.headers.get('content-type') ?? '';
         if (!response.filePath) throw providerProtocolError(`供应商返回类型无效：${contentType || 'missing'}`);
         if (!usedChatFallback && !contentType.includes('application/json')) throw providerProtocolError(`供应商返回类型无效：${contentType || 'missing'}`);
         if (usedChatFallback && contentType && !/json|event-stream|text\/plain/i.test(contentType)) throw providerProtocolError(`供应商返回类型无效：${contentType}`);
-        const sources = usedChatFallback || isQwenImage
+        const sources = usedChatFallback || isQwenImage || isNanoBanana
           ? await parseChatCompletionImages(response.filePath, params.count, this.storage)
           : await parseProviderImages(response.filePath, params.count, this.storage);
         try {
@@ -601,6 +695,81 @@ export class GenerationProcessor extends WorkerHost {
     }
   }
 
+  private async runAsyncImageAdapter(
+    job: {
+      id: string;
+      userId: string;
+      mode: string;
+      prompt: string;
+      user: { role: 'USER' | 'ADMIN' };
+      model: {
+        upstreamModelId: string;
+        provider: { baseUrl: string; timeoutSeconds: number; pollTimeoutSeconds: number };
+      };
+    },
+    params: Record<string, unknown>,
+    headers: Record<string, string>,
+    kind: 'flux' | 'midjourney' | 'runway-images',
+  ): Promise<boolean> {
+    const label = kind === 'flux' ? 'Flux' : kind === 'midjourney' ? 'Midjourney' : 'Runway';
+    if (job.mode === 'INPAINT') {
+      const error: any = new Error(`${label} 不支持蒙版局部重绘`);
+      error.noRetry = true;
+      error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: `${label} 不支持蒙版局部重绘，请改用参考图编辑` };
+      throw error;
+    }
+    const sourceIds = Array.isArray(params.sourceAssetIds) ? params.sourceAssetIds.filter((id): id is string => typeof id === 'string') : [];
+    const maxRefs = kind === 'flux' ? 8 : kind === 'midjourney' ? 5 : 3;
+    if (sourceIds.length > maxRefs) {
+      const error: any = new Error(`${label} 最多支持 ${maxRefs} 张参考图`);
+      error.noRetry = true;
+      error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: `${label} 最多支持 ${maxRefs} 张参考图，请减少参考图数量` };
+      throw error;
+    }
+    const deps: VideoAdapterDeps = {
+      http: this.http,
+      headers,
+      baseUrl: job.model.provider.baseUrl,
+      timeoutSeconds: job.model.provider.timeoutSeconds,
+      pollTimeoutSeconds: job.model.provider.pollTimeoutSeconds,
+    };
+    try {
+      let token = typeof params.providerTaskId === 'string' && params.providerTaskId.trim() ? params.providerTaskId.trim() : '';
+      if (!token) {
+        const reader = await this.jobReader(job.userId, job.user.role);
+        const images: string[] = [];
+        for (const assetId of sourceIds) {
+          const asset = await this.sourceAsset(reader, assetId);
+          if (kind === 'flux') images.push((await readFile(this.storage.filePath(asset.objectKey))).toString('base64'));
+          else images.push(await fileToDataUrl(this.storage.filePath(asset.objectKey), asset.mimeType));
+        }
+        token = kind === 'flux'
+          ? await submitFluxRequest(deps, fluxEndpointSlug(job.model.upstreamModelId), fluxRequestBody(job.prompt, params, images))
+          : kind === 'midjourney'
+            ? await submitMidjourneyImagine(deps, mjRequestBody(mjPrompt(job.prompt, job.model.upstreamModelId, params), images))
+            : await submitRunwayImage(deps, runwayImageRequestBody(job.model.upstreamModelId, job.prompt, params, images));
+        await this.prisma.generationJob.update({ where: { id: job.id }, data: { parameters: { ...params, providerTaskId: token } as object } });
+      }
+      const imageUrl = kind === 'flux'
+        ? await pollFluxUntilReady(deps, token)
+        : kind === 'midjourney'
+          ? await pollMidjourneyTask(deps, token)
+          : await pollRunwayImageTask(deps, token);
+      const [freshUser, freshJob] = await Promise.all([
+        this.prisma.user.findUnique({ where: { id: job.userId }, select: { status: true } }),
+        this.prisma.generationJob.findUnique({ where: { id: job.id }, select: { status: true } }),
+      ]);
+      if (!freshUser || freshUser.status !== 'ACTIVE' || !freshJob || freshJob.status === 'CANCELLED') {
+        await this.lifecycle.finish(job.userId, job.id, 'CANCELLED');
+        return false;
+      }
+      await this.persistSource(job.userId, job.id, { url: imageUrl });
+      return true;
+    } catch (error: any) {
+      throw mapProviderRequestError(error);
+    }
+  }
+
   private async persistSource(userId: string, jobId: string, source: ProviderImageSource) {
     const rawPath = source.path ?? await this.download(source.url);
     let image;
@@ -609,13 +778,13 @@ export class GenerationProcessor extends WorkerHost {
     await this.assets.persistNormalized({ userId, jobId, role: 'OUTPUT', image });
   }
 
-  private async jobReader(userId: string, role: AuthUser['role']): Promise<Pick<AuthUser, 'id' | 'role' | 'groupIds'>> {
-    if (role === 'ADMIN') return { id: userId, role, groupIds: [] };
-    const rows = await this.prisma.userGroupMembership.findMany({ where: { userId }, select: { groupId: true } });
-    return { id: userId, role, groupIds: rows.map(({ groupId }) => groupId) };
+  private async jobReader(userId: string, role: AuthUser['role']): Promise<Pick<AuthUser, 'id' | 'role' | 'teamIds'>> {
+    if (role === 'ADMIN') return { id: userId, role, teamIds: [] };
+    const rows = await this.prisma.workTeamMembership.findMany({ where: { userId }, select: { teamId: true } });
+    return { id: userId, role, teamIds: rows.map(({ teamId }) => teamId) };
   }
 
-  private async sourceAsset(user: Pick<AuthUser, 'id' | 'role' | 'groupIds'>, id: string) {
+  private async sourceAsset(user: Pick<AuthUser, 'id' | 'role' | 'teamIds'>, id: string) {
     const asset = await this.prisma.asset.findFirst({
       where: { id, ...accessibleSourceWhere(user as AuthUser) },
       select: { objectKey: true, mimeType: true, originalName: true, width: true, height: true },
@@ -640,7 +809,7 @@ export class GenerationProcessor extends WorkerHost {
       const response = await this.http.requestToFile(url, { method: 'GET', redirectPolicy: 'any', signal: AbortSignal.timeout(60_000) }, destination, MAX_IMAGE_BYTES, MAX_ERROR_BYTES);
       if (!response.ok) throw new Error(`图片下载失败：${response.status}`);
       const type = response.headers.get('content-type') ?? '';
-      if (!type.startsWith('image/')) throw providerProtocolError('供应商图片类型无效');
+      if (type && !/^image\//i.test(type) && !/^application\/octet-stream/i.test(type)) throw providerProtocolError('供应商图片类型无效');
       return destination;
     } catch (error) {
       await this.storage.deleteStaged(destination).catch(() => undefined);

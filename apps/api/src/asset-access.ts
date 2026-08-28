@@ -3,24 +3,26 @@ import type { AuthUser } from './common';
 
 const LIBRARY_ROLES = ['UPLOAD', 'OUTPUT'] as const;
 
-export type AssetShareGroup = { groupId: string };
+export type AssetShareTeam = { teamId: string };
 
 export type AssetAccessView = {
   userId: string;
   role: string;
   deletedAt?: Date | null;
-  shares?: AssetShareGroup[] | null;
+  purgedAt?: Date | null;
+  shares?: AssetShareTeam[] | null;
   thumbnailFor?: {
     userId: string;
     role: string;
     deletedAt?: Date | null;
-    shares?: AssetShareGroup[] | null;
+    purgedAt?: Date | null;
+    shares?: AssetShareTeam[] | null;
   } | null;
 };
 
 export function sharedToViewerWhere(user: AuthUser): Prisma.AssetShareWhereInput {
   if (user.role === 'ADMIN') return {};
-  return { groupId: { in: user.groupIds ?? [] } };
+  return { teamId: { in: user.teamIds ?? [] } };
 }
 
 export function accessibleSourceWhere(user: AuthUser): Prisma.AssetWhereInput {
@@ -52,18 +54,25 @@ function libraryTarget(asset: AssetAccessView) {
   return asset;
 }
 
-function hasShareAccess(user: AuthUser, shares: AssetShareGroup[] | null | undefined) {
+function hasShareAccess(user: AuthUser, shares: AssetShareTeam[] | null | undefined) {
   if (!shares?.length) return false;
   if (user.role === 'ADMIN') return true;
-  const groups = new Set(user.groupIds ?? []);
-  return shares.some(({ groupId }) => groups.has(groupId));
+  const teams = new Set(user.teamIds ?? []);
+  return shares.some(({ teamId }) => teams.has(teamId));
+}
+
+function isPurged(asset: { purgedAt?: Date | null } | null | undefined) {
+  return Boolean(asset?.purgedAt);
 }
 
 export function canReadAsset(user: AuthUser, asset: AssetAccessView | null | undefined) {
-  if (!asset || asset.deletedAt) return false;
-  if (asset.userId === user.id) return true;
+  if (!asset || isPurged(asset)) return false;
   const target = libraryTarget(asset);
-  if (!target || target.deletedAt) return false;
+  if (isPurged(target)) return false;
+  const trashed = Boolean(asset.deletedAt || target?.deletedAt);
+  if (trashed) return asset.userId === user.id;
+  if (asset.userId === user.id) return true;
+  if (!target) return false;
   if (target.userId === user.id) return true;
   if (target.role !== 'UPLOAD' && target.role !== 'OUTPUT') return false;
   return hasShareAccess(user, target.shares ?? (target === asset ? asset.shares : null));

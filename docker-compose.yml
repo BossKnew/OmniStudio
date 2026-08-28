@@ -1,4 +1,4 @@
-name: omnistudio
+name: omni-studio
 
 x-app-hardening: &app-hardening
   read_only: true
@@ -65,6 +65,7 @@ services:
   migrate:
     <<: *app-hardening
     build: { context: ., target: migrate }
+    image: omni-studio:migrate
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     restart: "no"
     networks: [app, data]
@@ -80,6 +81,7 @@ services:
   api:
     <<: *app-hardening
     build: { context: ., target: api }
+    image: omni-studio:api
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     restart: unless-stopped
     networks: [app, data]
@@ -145,6 +147,7 @@ services:
 
   nginx:
     build: { context: ., target: web }
+    image: omni-studio:web
     restart: unless-stopped
     networks: [app]
     read_only: true

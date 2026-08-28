@@ -19,7 +19,7 @@ describe('AssetsController', () => {
       },
     };
     storage = { normalizeImageFile: jest.fn(), saveStaged: jest.fn(), deleteStaged: jest.fn(), delete: jest.fn() };
-    lifecycle = { persistNormalized: jest.fn(), remove: jest.fn() };
+    lifecycle = { persistNormalized: jest.fn(), remove: jest.fn(), restore: jest.fn(), purge: jest.fn(), emptyTrash: jest.fn() };
     controller = new AssetsController(prisma, storage, lifecycle);
   });
 
@@ -68,11 +68,42 @@ describe('AssetsController', () => {
     }]);
     prisma.asset.count = jest.fn().mockResolvedValue(1);
     const result = await controller.list(user);
-    expect(result.items[0]).toMatchObject({ id: 'asset-1', note: '封面候选', generationPrompt: '雨夜城市', visibility: 'owned', sharedGroupIds: [], sizeBytes: '4096', contentUrl: '/api/v1/assets/asset-1/content', thumbnailUrl: '/api/v1/assets/asset-1/content' });
+    expect(result.items[0]).toMatchObject({ id: 'asset-1', note: '封面候选', generationPrompt: '雨夜城市', visibility: 'owned', sharedTeamIds: [], sizeBytes: '4096', contentUrl: '/api/v1/assets/asset-1/content', thumbnailUrl: '/api/v1/assets/asset-1/content' });
     expect(result.items[0].objectKey).toBeUndefined();
     expect(result.items[0].contentHash).toBeUndefined();
     expect((result.items[0] as any).job).toBeUndefined();
     expect(result.total).toBe(1);
+  });
+
+  it('lists owned assets with filters and counts without the cursor', async () => {
+    prisma.asset.findMany.mockResolvedValue([]);
+    prisma.asset.count = jest.fn().mockResolvedValue(0);
+    const from = '2026-08-01T00:00:00.000Z';
+    const to = '2026-08-28T00:00:00.000Z';
+    const modelId = '11111111-1111-4111-8111-111111111111';
+    await controller.list(user, { mediaKind: 'IMAGE', role: 'OUTPUT', q: '封面', modelId, from, to });
+    const filterWhere = {
+      deletedAt: null,
+      role: 'OUTPUT',
+      mediaKind: 'IMAGE',
+      createdAt: { gte: new Date(from), lt: new Date(to) },
+      AND: [
+        { job: { modelId } },
+        { OR: [
+          { note: { contains: '封面', mode: 'insensitive' } },
+          { job: { prompt: { contains: '封面', mode: 'insensitive' } } },
+        ] },
+      ],
+    };
+    expect(prisma.asset.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { userId: 'user-1', AND: [filterWhere, {}] },
+    }));
+    expect(prisma.asset.count).toHaveBeenCalledWith({ where: { userId: 'user-1', ...filterWhere } });
+  });
+
+  it('rejects an invalid owned-library filter', async () => {
+    await expect(controller.list(user, { mediaKind: 'AUDIO' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.asset.findMany).not.toHaveBeenCalled();
   });
 
   it('allows only private caching for authenticated asset content', async () => {
@@ -113,7 +144,7 @@ describe('AssetsController', () => {
     expect(storage.createReadStream).toBeUndefined();
   });
 
-  it('deletes stored bytes but keeps a tombstone for conversation history', async () => {
+  it('moves a library asset into trash', async () => {
     lifecycle.remove.mockResolvedValue({ id: 'asset-1' });
 
     await expect(controller.remove(user, 'asset-1')).resolves.toEqual({ ok: true });
@@ -121,58 +152,95 @@ describe('AssetsController', () => {
     expect(lifecycle.remove).toHaveBeenCalledWith('user-1', 'asset-1');
   });
 
+  it('restores and permanently purges trash items through the lifecycle', async () => {
+    lifecycle.restore.mockResolvedValue({ id: 'asset-1' });
+    lifecycle.purge.mockResolvedValue({ id: 'asset-1' });
+    lifecycle.emptyTrash.mockResolvedValue(2);
+    await expect(controller.restore(user, 'asset-1')).resolves.toEqual({ ok: true });
+    await expect(controller.purge(user, 'asset-1')).resolves.toEqual({ ok: true });
+    await expect(controller.emptyTrash(user)).resolves.toEqual({ ok: true, purged: 2 });
+  });
+
+  it('lets the owner read trashed content until it is purged', async () => {
+    prisma.asset.findFirst.mockResolvedValue({
+      id: 'asset-1', userId: 'user-1', role: 'OUTPUT', deletedAt: new Date(), purgedAt: null, shares: [],
+      objectKey: 'user-1/trashed.png', mimeType: 'image/png', sizeBytes: 3n, thumbnailFor: null,
+    });
+    const stream = { on: jest.fn().mockReturnThis(), pipe: jest.fn() };
+    storage.createReadStream = jest.fn(() => stream);
+    const response = { setHeader: jest.fn(), destroy: jest.fn() } as any;
+    await controller.content(user, 'asset-1', response);
+    expect(prisma.asset.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'asset-1', purgedAt: null } }));
+    expect(stream.pipe).toHaveBeenCalledWith(response);
+  });
+
   it('hides unshared private content from other users and administrators', async () => {
     prisma.asset.findFirst.mockResolvedValue({ id: 'asset-1', userId: 'owner-1', role: 'OUTPUT', deletedAt: null, shares: [], objectKey: 'owner-1/private.png', mimeType: 'image/png', sizeBytes: 3n, thumbnailFor: null });
     const response = { setHeader: jest.fn() } as any;
-    await expect(controller.content({ id: 'member-1', role: 'USER', groupIds: ['design'] } as any, 'asset-1', response)).rejects.toBeInstanceOf(NotFoundException);
-    await expect(controller.content({ id: 'admin-1', role: 'ADMIN', groupIds: [] } as any, 'asset-1', response)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(controller.content({ id: 'member-1', role: 'USER', teamIds: ['design'] } as any, 'asset-1', response)).rejects.toBeInstanceOf(NotFoundException);
+    await expect(controller.content({ id: 'admin-1', role: 'ADMIN', teamIds: [] } as any, 'asset-1', response)).rejects.toBeInstanceOf(NotFoundException);
     expect(storage.createReadStream).toBeUndefined();
   });
 
-  it('lets a current group member read shared content', async () => {
+  it('lets a current team member read shared content', async () => {
     prisma.asset.findFirst.mockResolvedValue({
-      id: 'asset-1', userId: 'owner-1', role: 'OUTPUT', deletedAt: null, shares: [{ groupId: 'design' }],
+      id: 'asset-1', userId: 'owner-1', role: 'OUTPUT', deletedAt: null, shares: [{ teamId: 'design' }],
       objectKey: 'owner-1/shared.png', mimeType: 'image/png', sizeBytes: 3n, thumbnailFor: null,
     });
     const stream = { on: jest.fn().mockReturnThis(), pipe: jest.fn() };
     storage.createReadStream = jest.fn(() => stream);
     const response = { setHeader: jest.fn(), destroy: jest.fn() } as any;
-    await controller.content({ id: 'member-1', role: 'USER', groupIds: ['design'] } as any, 'asset-1', response);
+    await controller.content({ id: 'member-1', role: 'USER', teamIds: ['design'] } as any, 'asset-1', response);
     expect(stream.pipe).toHaveBeenCalledWith(response);
   });
 
-  it('omits notes and prompts from the group library', async () => {
+  it('omits notes and prompts from the team library', async () => {
     prisma.assetShare = {
       findMany: jest.fn().mockResolvedValue([{
         id: 'share-1', createdAt: new Date('2026-08-20T00:00:00.000Z'),
-        group: { id: 'design', name: 'Design' },
+        team: { id: 'design', name: 'Design' },
         sharedBy: { displayName: 'Alice', username: 'alice' },
         asset: { id: 'asset-1', userId: 'owner-1', role: 'OUTPUT', mimeType: 'image/png', sizeBytes: 4n, width: 10, height: 10, deletedAt: null, objectKey: 'owner/secret.png', note: 'secret', thumbnail: null },
       }]),
       count: jest.fn().mockResolvedValue(1),
     };
-    const result = await controller.shared({ id: 'member-1', role: 'USER', groupIds: ['design'] } as any);
+    const result = await controller.shared({ id: 'member-1', role: 'USER', teamIds: ['design'] } as any);
     expect(result.items[0]).toMatchObject({
       id: 'asset-1', visibility: 'shared', note: null, generationPrompt: null,
-      group: { id: 'design', name: 'Design' }, sharedBy: { displayName: 'Alice' }, canUnshare: false,
+      team: { id: 'design', name: 'Design' }, sharedBy: { displayName: 'Alice' }, canUnshare: false,
       contentUrl: '/api/v1/assets/asset-1/content',
     });
     expect((result.items[0] as any).objectKey).toBeUndefined();
   });
 
+  it('filters the team library through the nested asset where and rejects keywords', async () => {
+    prisma.assetShare = {
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+    };
+    await controller.shared({ id: 'member-1', role: 'USER', teamIds: ['design'] } as any, { mediaKind: 'VIDEO', role: 'UPLOAD' });
+    expect(prisma.assetShare.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        teamId: { in: ['design'] },
+        asset: { deletedAt: null, role: 'UPLOAD', mediaKind: 'VIDEO' },
+      }),
+    }));
+    await expect(controller.shared({ id: 'member-1', role: 'USER', teamIds: ['design'] } as any, { q: 'secret' })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('lets only the owner replace share targets', async () => {
-    const groupId = '11111111-1111-4111-8111-111111111111';
+    const teamId = '11111111-1111-4111-8111-111111111111';
     prisma.asset.findFirst.mockResolvedValue({ id: 'asset-1', userId: 'owner-1', role: 'OUTPUT', deletedAt: null });
-    await expect(controller.replaceShares({ id: 'member-1', role: 'USER', groupIds: [groupId] } as any, 'asset-1', { groupIds: [groupId] })).rejects.toBeInstanceOf(NotFoundException);
-    await expect(controller.replaceShares({ id: 'admin-1', role: 'ADMIN', groupIds: [] } as any, 'asset-1', { groupIds: [groupId] })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(controller.replaceShares({ id: 'member-1', role: 'USER', teamIds: [teamId] } as any, 'asset-1', { teamIds: [teamId] })).rejects.toBeInstanceOf(NotFoundException);
+    await expect(controller.replaceShares({ id: 'admin-1', role: 'ADMIN', teamIds: [] } as any, 'asset-1', { teamIds: [teamId] })).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('lets an administrator unshare another user\'s asset', async () => {
-    const groupId = '11111111-1111-4111-8111-111111111111';
+    const teamId = '11111111-1111-4111-8111-111111111111';
     prisma.asset.findFirst.mockResolvedValue({ id: 'asset-1', userId: 'owner-1', deletedAt: null });
     prisma.assetShare = { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) };
     prisma.auditLog = { create: jest.fn().mockResolvedValue({}) };
-    await expect(controller.unshare({ id: 'admin-1', role: 'ADMIN', groupIds: [] } as any, 'asset-1', groupId)).resolves.toEqual({ ok: true });
-    expect(prisma.assetShare.deleteMany).toHaveBeenCalledWith({ where: { assetId: 'asset-1', groupId } });
+    await expect(controller.unshare({ id: 'admin-1', role: 'ADMIN', teamIds: [] } as any, 'asset-1', teamId)).resolves.toEqual({ ok: true });
+    expect(prisma.assetShare.deleteMany).toHaveBeenCalledWith({ where: { assetId: 'asset-1', teamId } });
   });
 });

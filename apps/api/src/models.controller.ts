@@ -5,7 +5,8 @@ import { parseBody, safeText, uuidSchema } from './validation';
 import { z } from 'zod';
 import { accessibleModelWhere } from './model-access';
 import { Prisma } from './generated/prisma/client';
-import { ACTIVE_JOB_STATUSES, mediaKindForAdapter } from './domain-constants';
+import { ACTIVE_JOB_STATUSES, isProviderAdapterKind, mediaKindForAdapter, PROVIDER_ADAPTER_KINDS } from './domain-constants';
+import { normalizeAdapterKind } from './provider-adapter';
 import { cleanImageRatios, cleanImageTiers, computeImageSize, DEFAULT_IMAGE_RATIOS, DEFAULT_IMAGE_TIERS, imageSizeAllowed } from './resolution';
 import { MAX_POINT_MULTIPLIER } from './generation-quota';
 
@@ -24,9 +25,12 @@ const resolutionTierSchema = z.object({
 const ratioSchema = z.string().trim().regex(/^\d{1,4}:\d{1,4}$/);
 const modelSchema = z.object({
   providerId: uuidSchema, displayName: safeText(128), upstreamModelId: safeText(256),
+  adapterKind: z.enum(PROVIDER_ADAPTER_KINDS),
+  mediaKind: z.enum(['IMAGE', 'VIDEO']).optional(),
   allowedSizes: sizeOptionSchema.optional(), allowedQualities: optionSchema.optional(), allowedDurations: durationsSchema.optional(),
   resolutionTiers: z.array(resolutionTierSchema).max(12).optional(), allowedRatios: z.array(ratioSchema).max(12).optional(),
   supportsGeneration: z.boolean().optional(), supportsEdit: z.boolean().optional(), supportsInpaint: z.boolean().optional(),
+  supportsFirstLastFrame: z.boolean().optional(),
   maxImages: z.number().int().min(1).max(4).optional(), maxInputImages: z.number().int().min(1).max(8).optional(),
   defaults: z.record(z.string(), z.unknown()).optional(), enabled: z.boolean().optional(), sortOrder: z.number().int().min(-10_000).max(10_000).optional(),
 	costPerUnit: z.number().int().min(1).max(1000).optional(),
@@ -44,13 +48,13 @@ export class ModelsController {
     return this.prisma.model.findMany({
       where: { enabled: true, provider: { enabled: true, archivedAt: null }, ...accessibleModelWhere(user) },
       orderBy: [{ sortOrder: 'asc' }, { displayName: 'asc' }],
-      select: { id: true, displayName: true, mediaKind: true, supportsGeneration: true, supportsEdit: true, supportsInpaint: true, allowedSizes: true, allowedQualities: true, allowedDurations: true, resolutionTiers: true, allowedRatios: true, maxImages: true, maxInputImages: true, defaults: true, costPerUnit: true, pointMultipliers: true },
+      select: { id: true, displayName: true, mediaKind: true, supportsGeneration: true, supportsEdit: true, supportsInpaint: true, supportsFirstLastFrame: true, allowedSizes: true, allowedQualities: true, allowedDurations: true, resolutionTiers: true, allowedRatios: true, maxImages: true, maxInputImages: true, defaults: true, costPerUnit: true, pointMultipliers: true },
     });
   }
 
   @Roles('ADMIN') @Get('admin/models')
   adminModels() {
-    return this.prisma.model.findMany({ where: { provider: { archivedAt: null } }, orderBy: [{ sortOrder: 'asc' }, { displayName: 'asc' }], include: { provider: { select: { id: true, name: true, adapterKind: true } }, allowedGroups: { select: { groupId: true, group: { select: { id: true, name: true } } } } } });
+    return this.prisma.model.findMany({ where: { provider: { archivedAt: null } }, orderBy: [{ sortOrder: 'asc' }, { displayName: 'asc' }], include: { provider: { select: { id: true, name: true } }, allowedGroups: { select: { groupId: true, group: { select: { id: true, name: true } } } } } });
   }
 
   @Roles('ADMIN') @Post('admin/models')
@@ -66,8 +70,8 @@ export class ModelsController {
   async update(@CurrentUser() actor: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() raw: unknown) {
     const body = parseBody(modelSchema.partial().strict(), raw);
     const current = await this.prisma.model.findUniqueOrThrow({ where: { id } });
-    // merged 同时包含数据库行（Json 字段）与已通过 zod 校验的请求体，按 ModelInput 消费
-    const merged = { ...current, ...body } as ModelInput;
+    // 库里的 mediaKind 由适配器推导；显式覆盖，避免只改 adapterKind 时被旧值误判为不匹配
+    const merged = { ...current, ...body, mediaKind: body.mediaKind } as ModelInput;
     this.validate(merged);
     if (body.allowedGroupIds) await this.assertGroupsExist(body.allowedGroupIds);
     const model = await this.prisma.model.update({ where: { id }, data: {
@@ -95,9 +99,12 @@ export class ModelsController {
   }
 
   private async data(body: ModelInput) {
-    const provider = await this.prisma.provider.findUnique({ where: { id: body.providerId }, select: { adapterKind: true } });
+    const provider = await this.prisma.provider.findUnique({ where: { id: body.providerId }, select: { id: true } });
     if (!provider) throw new BadRequestException('供应商不存在');
-    const mediaKind = mediaKindForAdapter(provider.adapterKind);
+    const adapterKind = normalizeAdapterKind(body.adapterKind);
+    if (!isProviderAdapterKind(adapterKind)) throw new BadRequestException('未知适配器类型');
+    const mediaKind = mediaKindForAdapter(adapterKind);
+    if (body.mediaKind && body.mediaKind !== mediaKind) throw new BadRequestException('模型类型与适配器类型不匹配');
     const video = mediaKind === 'VIDEO';
     const requestedSizes = body.allowedSizes ?? (video ? ['16:9', '9:16', '1:1'] : []);
     const allowedSizes = video ? (requestedSizes.length ? requestedSizes : ['16:9']) : [];
@@ -129,12 +136,14 @@ export class ModelsController {
     const defaultDuration = video
       ? (typeof requestedDefaults.durationSeconds === 'number' && allowedDurations.includes(requestedDefaults.durationSeconds) ? requestedDefaults.durationSeconds : allowedDurations[0])
       : undefined;
+    const supportsFirstLastFrame = video && Boolean(body.supportsFirstLastFrame);
     const pointMultipliers = sanitizePointMultipliers(body.pointMultipliers);
     return {
-      providerId: body.providerId, displayName: String(body.displayName).trim(), upstreamModelId: String(body.upstreamModelId).trim(), mediaKind,
-      supportsGeneration: body.supportsGeneration !== false, supportsEdit: Boolean(body.supportsEdit), supportsInpaint: video ? false : Boolean(body.supportsInpaint),
+      providerId: body.providerId, displayName: String(body.displayName).trim(), upstreamModelId: String(body.upstreamModelId).trim(), adapterKind, mediaKind,
+      supportsGeneration: body.supportsGeneration !== false, supportsEdit: Boolean(body.supportsEdit), supportsInpaint: adapterKind === 'openai-images' && Boolean(body.supportsInpaint),
+      supportsFirstLastFrame,
       allowedSizes, allowedQualities, allowedDurations, resolutionTiers, allowedRatios,
-      maxImages, maxInputImages: Math.min(8, Math.max(1, Number(body.maxInputImages) || 1)),
+      maxImages, maxInputImages: Math.min(8, Math.max(supportsFirstLastFrame ? 2 : 1, Number(body.maxInputImages) || 1)),
       defaults: { ...requestedDefaults, size: defaultSize, ...(defaultQuality !== undefined ? { quality: defaultQuality } : { quality: undefined }), count: defaultCount, ...(defaultDuration !== undefined ? { durationSeconds: defaultDuration } : {}) },
       enabled: body.enabled !== false, sortOrder: Number(body.sortOrder) || 0,
       costPerUnit: Math.min(1000, Math.max(1, Number(body.costPerUnit) || 1)),

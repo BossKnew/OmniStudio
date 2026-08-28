@@ -1,18 +1,52 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
 import { QuotaService } from './quota.service';
 import { StorageService } from './storage.service';
+import { trashRetentionFromSetting } from './trash-retention';
 
 type NormalizedImage = { path: string; sizeBytes: bigint; mimeType: string; width: number; height: number };
 type NormalizedVideo = { path: string; sizeBytes: bigint; mimeType: string; width: number | null; height: number | null; durationMs: number | null };
+const trashSelect = {
+  id: true,
+  userId: true,
+  objectKey: true,
+  sizeBytes: true,
+  thumbnail: { select: { id: true, objectKey: true, deletedAt: true } },
+} as const;
+type TrashItem = {
+  id: string;
+  userId: string;
+  objectKey: string;
+  sizeBytes: bigint;
+  thumbnail: { id: string; objectKey: string; deletedAt: Date | null } | null;
+};
 
 function prismaErrorCode(error: unknown) {
   return error && typeof error === 'object' && 'code' in error ? (error as { code?: unknown }).code : undefined;
 }
 
+const LIBRARY_ROLES = ['UPLOAD', 'OUTPUT'] as const;
+const TRASH_PURGE_INTERVAL_MS = 60 * 60 * 1000;
+
 @Injectable()
-export class AssetLifecycleService {
+export class AssetLifecycleService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(AssetLifecycleService.name);
+  private purgeTimer?: NodeJS.Timeout;
+
   constructor(private prisma: PrismaService, private storage: StorageService, private quota: QuotaService) {}
+
+  async onModuleInit() {
+    await this.purgeExpired().catch((error) => this.logger.warn(`trash purge failed: ${error instanceof Error ? error.message : 'unknown'}`));
+    this.purgeTimer = setInterval(() => void this.purgeExpired().catch((error) => this.logger.warn(`trash purge failed: ${error instanceof Error ? error.message : 'unknown'}`)), TRASH_PURGE_INTERVAL_MS);
+    this.purgeTimer.unref();
+  }
+
+  onModuleDestroy() { clearInterval(this.purgeTimer); }
+
+  async currentTrashRetention() {
+    const row = await this.prisma.systemSetting.findUnique({ where: { key: 'trash_retention' } });
+    return trashRetentionFromSetting(row?.value);
+  }
 
   async persistNormalized(input: {
     userId: string;
@@ -194,24 +228,97 @@ export class AssetLifecycleService {
 
   async remove(userId: string, id: string) {
     const asset = await this.prisma.asset.findFirst({
-      where: { id, userId, deletedAt: null, role: { in: ['UPLOAD', 'OUTPUT'] } },
-      select: { id: true, objectKey: true, sizeBytes: true, thumbnail: { select: { id: true, objectKey: true } } },
+      where: { id, userId, deletedAt: null, role: { in: [...LIBRARY_ROLES] } },
+      select: { id: true, thumbnail: { select: { id: true } } },
     });
     if (!asset) return null;
-    await this.storage.deleteMany([asset.objectKey, ...(asset.thumbnail ? [asset.thumbnail.objectKey] : [])]);
+    const now = new Date();
+    const purgeAfter = new Date(now.getTime() + (await this.currentTrashRetention()).seconds * 1000);
+    const data = { deletedAt: now, purgeAfter, purgedAt: null };
     await this.prisma.$transaction([
-      this.prisma.asset.update({ where: { id: asset.id }, data: { deletedAt: new Date() } }),
-      ...(asset.thumbnail ? [this.prisma.asset.update({ where: { id: asset.thumbnail.id }, data: { deletedAt: new Date() } })] : []),
+      this.prisma.asset.update({ where: { id: asset.id }, data }),
+      ...(asset.thumbnail ? [this.prisma.asset.update({ where: { id: asset.thumbnail.id }, data })] : []),
     ]);
-    await this.quota.releaseStorage(userId, asset.sizeBytes);
     return asset;
   }
 
+  async restore(userId: string, id: string) {
+    const asset = await this.prisma.asset.findFirst({
+      where: { id, userId, deletedAt: { not: null }, purgedAt: null, role: { in: [...LIBRARY_ROLES] } },
+      select: { id: true, thumbnail: { select: { id: true } } },
+    });
+    if (!asset) return null;
+    const data = { deletedAt: null, purgeAfter: null, purgedAt: null };
+    await this.prisma.$transaction([
+      this.prisma.asset.update({ where: { id: asset.id }, data }),
+      ...(asset.thumbnail ? [this.prisma.asset.update({ where: { id: asset.thumbnail.id }, data })] : []),
+    ]);
+    return asset;
+  }
+
+  async purge(userId: string, id: string) {
+    const asset = await this.findTrashItem(userId, id);
+    if (!asset) return null;
+    await this.purgeOne(asset);
+    return asset;
+  }
+
+  async emptyTrash(userId: string) {
+    let purged = 0;
+    for (;;) {
+      const batch = await this.prisma.asset.findMany({
+        where: { userId, deletedAt: { not: null }, purgedAt: null, role: { in: [...LIBRARY_ROLES] } },
+        select: trashSelect,
+        take: 50,
+      });
+      if (!batch.length) return purged;
+      for (const asset of batch) {
+        if (await this.purgeOne(asset)) purged += 1;
+      }
+    }
+  }
+
+  async purgeExpired() {
+    let purged = 0;
+    for (;;) {
+      const batch = await this.prisma.asset.findMany({
+        where: { deletedAt: { not: null }, purgedAt: null, purgeAfter: { lte: new Date() }, role: { in: [...LIBRARY_ROLES] } },
+        select: trashSelect,
+        take: 50,
+      });
+      if (!batch.length) return purged;
+      for (const asset of batch) {
+        if (await this.purgeOne(asset)) purged += 1;
+      }
+    }
+  }
+
+  private findTrashItem(userId: string, id: string) {
+    return this.prisma.asset.findFirst({
+      where: { id, userId, deletedAt: { not: null }, purgedAt: null, role: { in: [...LIBRARY_ROLES] } },
+      select: trashSelect,
+    });
+  }
+
+  private async purgeOne(asset: TrashItem) {
+    const now = new Date();
+    const claimed = await this.prisma.$transaction(async (tx) => {
+      const parent = await tx.asset.updateMany({ where: { id: asset.id, deletedAt: { not: null }, purgedAt: null }, data: { purgedAt: now } });
+      if (!parent.count) return false;
+      if (asset.thumbnail) await tx.asset.updateMany({ where: { id: asset.thumbnail.id, purgedAt: null }, data: { purgedAt: now, deletedAt: asset.thumbnail.deletedAt ?? now } });
+      return true;
+    });
+    if (!claimed) return false;
+    await this.storage.deleteMany([asset.objectKey, ...(asset.thumbnail ? [asset.thumbnail.objectKey] : [])]);
+    await this.quota.releaseStorage(asset.userId, asset.sizeBytes);
+    return true;
+  }
+
   async removeJobOutputs(userId: string, jobId: string) {
-    const assets = await this.prisma.asset.findMany({ where: { jobId, role: { in: ['OUTPUT', 'THUMBNAIL'] } }, select: { objectKey: true, role: true, sizeBytes: true, deletedAt: true } });
+    const assets = await this.prisma.asset.findMany({ where: { jobId, role: { in: ['OUTPUT', 'THUMBNAIL'] } }, select: { objectKey: true, role: true, sizeBytes: true, deletedAt: true, purgedAt: true } });
     await this.storage.deleteMany(assets.map(({ objectKey }) => objectKey));
     await this.prisma.asset.deleteMany({ where: { jobId, role: { in: ['OUTPUT', 'THUMBNAIL'] } } });
-    const bytes = assets.filter((asset) => asset.role === 'OUTPUT' && !asset.deletedAt).reduce((sum, asset) => sum + asset.sizeBytes, 0n);
+    const bytes = assets.filter((asset) => asset.role === 'OUTPUT' && !asset.purgedAt).reduce((sum, asset) => sum + asset.sizeBytes, 0n);
     if (bytes) await this.quota.releaseStorage(userId, bytes);
     return bytes;
   }

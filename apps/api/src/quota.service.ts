@@ -175,7 +175,7 @@ export class QuotaService implements OnModuleInit, OnModuleDestroy {
         await tx.$queryRaw`SELECT "id" FROM "GlobalUsage" WHERE "id" = 'global' FOR UPDATE`;
         const [usageRows, storageRows, jobRows] = await Promise.all([
           tx.userUsage.findMany(),
-          tx.asset.groupBy({ by: ['userId'], where: { deletedAt: null, role: { not: 'THUMBNAIL' } }, _sum: { sizeBytes: true } }),
+          tx.asset.groupBy({ by: ['userId'], where: { purgedAt: null, role: { not: 'THUMBNAIL' } }, _sum: { sizeBytes: true } }),
           tx.generationJob.groupBy({ by: ['userId'], where: { status: { in: [...ACTIVE_JOB_STATUSES] } }, _count: { _all: true } }),
         ]);
         const storage = new Map(storageRows.map((row) => [row.userId, row._sum.sizeBytes ?? 0n]));

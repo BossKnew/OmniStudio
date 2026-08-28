@@ -6,7 +6,7 @@ export const ROLES = 'roles';
 export const Public = () => SetMetadata(IS_PUBLIC, true);
 export const Roles = (...roles: Array<'USER' | 'ADMIN'>) => SetMetadata(ROLES, roles);
 
-export type AuthUser = Pick<User, 'id' | 'username' | 'displayName' | 'role' | 'status' | 'mustChangePwd'> & { mfaEnabled: boolean; mfaRequired: boolean; groupIds: string[] };
+export type AuthUser = Pick<User, 'id' | 'username' | 'displayName' | 'role' | 'status' | 'mustChangePwd'> & { mfaEnabled: boolean; mfaRequired: boolean; groupIds: string[]; teamIds: string[] };
 
 export const CurrentUser = createParamDecorator(
   (_data: unknown, context: ExecutionContext): AuthUser => context.switchToHttp().getRequest().user,

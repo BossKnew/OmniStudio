@@ -46,8 +46,8 @@ describe('ConversationsController asset cleanup', () => {
     const prisma: any = {
       conversation: {
         findFirst: jest.fn().mockResolvedValue({ id: 'conversation-1', jobs: [{ status: 'SUCCEEDED', parameters: {}, assets: [
-          { id: 'output-1', objectKey: 'user-1/output.png', sizeBytes: 6n, deletedAt: null, role: 'OUTPUT' },
-          { id: 'mask-1', objectKey: 'user-1/mask.png', sizeBytes: 4n, deletedAt: null, role: 'MASK' },
+          { id: 'output-1', objectKey: 'user-1/output.png', sizeBytes: 6n, deletedAt: null, purgedAt: null, role: 'OUTPUT' },
+          { id: 'mask-1', objectKey: 'user-1/mask.png', sizeBytes: 4n, deletedAt: null, purgedAt: null, role: 'MASK' },
         ] }] }),
       },
       $transaction: jest.fn((callback: any) => callback(transaction)),
@@ -72,8 +72,8 @@ describe('ConversationsController asset cleanup', () => {
         jobs: [{ status: 'FAILED', parameters: { sourceAssetIds: ['exclusive-upload', 'shared-upload'] }, assets: [] }],
       }) },
       asset: { findMany: jest.fn().mockResolvedValue([
-        { id: 'exclusive-upload', objectKey: 'user-1/exclusive.png', sizeBytes: 20n, deletedAt: null, role: 'UPLOAD', thumbnail: { id: 'exclusive-thumb', objectKey: 'user-1/exclusive.webp', sizeBytes: 2n, deletedAt: null, role: 'THUMBNAIL' } },
-        { id: 'shared-upload', objectKey: 'user-1/shared.png', sizeBytes: 30n, deletedAt: null, role: 'UPLOAD', thumbnail: null },
+        { id: 'exclusive-upload', objectKey: 'user-1/exclusive.png', sizeBytes: 20n, deletedAt: null, purgedAt: null, role: 'UPLOAD', thumbnail: { id: 'exclusive-thumb', objectKey: 'user-1/exclusive.webp', sizeBytes: 2n, deletedAt: null, purgedAt: null, role: 'THUMBNAIL' } },
+        { id: 'shared-upload', objectKey: 'user-1/shared.png', sizeBytes: 30n, deletedAt: null, purgedAt: null, role: 'UPLOAD', thumbnail: null },
       ]) },
       generationJob: { findMany: jest.fn().mockResolvedValue([{ parameters: { sourceAssetIds: ['shared-upload'] } }]) },
       $transaction: jest.fn((callback: any) => callback(transaction)),
@@ -102,7 +102,7 @@ describe('ConversationsController asset cleanup', () => {
         jobs: [{ status: 'FAILED', parameters: { sourceAssetIds: ['shared-upload'] }, assets: [] }],
       }) },
       asset: { findMany: jest.fn().mockResolvedValue([
-        { id: 'shared-upload', objectKey: 'user-1/shared.png', sizeBytes: 30n, deletedAt: null, role: 'UPLOAD', shares: [{ id: 'share-1' }], thumbnail: null },
+        { id: 'shared-upload', objectKey: 'user-1/shared.png', sizeBytes: 30n, deletedAt: null, purgedAt: null, role: 'UPLOAD', shares: [{ id: 'share-1' }], thumbnail: null },
       ]) },
       generationJob: { findMany: jest.fn().mockResolvedValue([]) },
       $transaction: jest.fn((callback: any) => callback(transaction)),

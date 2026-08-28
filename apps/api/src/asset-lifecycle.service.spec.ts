@@ -89,12 +89,13 @@ describe('AssetLifecycleService thumbnails', () => {
     expect(created[1]).toMatchObject({ role: 'THUMBNAIL', thumbnailForId: 'source-1', objectKey: 'user/thumb.webp' });
   });
 
-  it('deletes the source and thumbnail while releasing only metered source bytes', async () => {
+  it('moves the source and thumbnail to trash without deleting files or releasing quota', async () => {
     const prisma: any = {
       asset: {
-        findFirst: jest.fn().mockResolvedValue({ id: 'source-1', objectKey: 'user/source.png', sizeBytes: 1000n, thumbnail: { id: 'thumb-1', objectKey: 'user/thumb.webp' } }),
+        findFirst: jest.fn().mockResolvedValue({ id: 'source-1', thumbnail: { id: 'thumb-1' } }),
         update: jest.fn().mockResolvedValue({}),
       },
+      systemSetting: { findUnique: jest.fn().mockResolvedValue({ value: '7d' }) },
       $transaction: jest.fn().mockResolvedValue([]),
     };
     const storage: any = { deleteMany: jest.fn().mockResolvedValue(undefined) };
@@ -103,8 +104,61 @@ describe('AssetLifecycleService thumbnails', () => {
 
     await service.remove('user-1', 'source-1');
 
-    expect(storage.deleteMany).toHaveBeenCalledWith(['user/source.png', 'user/thumb.webp']);
+    expect(storage.deleteMany).not.toHaveBeenCalled();
+    expect(quota.releaseStorage).not.toHaveBeenCalled();
     expect(prisma.asset.update).toHaveBeenCalledTimes(2);
+    expect(prisma.asset.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'source-1' },
+      data: expect.objectContaining({ deletedAt: expect.any(Date), purgeAfter: expect.any(Date), purgedAt: null }),
+    }));
+  });
+
+  it('restores a trashed asset and its thumbnail', async () => {
+    const prisma: any = {
+      asset: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'source-1', thumbnail: { id: 'thumb-1' } }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      $transaction: jest.fn().mockResolvedValue([]),
+    };
+    const service = new AssetLifecycleService(prisma, { deleteMany: jest.fn() } as any, { releaseStorage: jest.fn() } as any);
+    await expect(service.restore('user-1', 'source-1')).resolves.toEqual(expect.objectContaining({ id: 'source-1' }));
+    expect(prisma.asset.update).toHaveBeenCalledWith({ where: { id: 'source-1' }, data: { deletedAt: null, purgeAfter: null, purgedAt: null } });
+    expect(prisma.asset.update).toHaveBeenCalledWith({ where: { id: 'thumb-1' }, data: { deletedAt: null, purgeAfter: null, purgedAt: null } });
+  });
+
+  it('permanently deletes claimed trash items and releases quota', async () => {
+    const asset = { id: 'source-1', userId: 'user-1', objectKey: 'user/source.png', sizeBytes: 1000n, thumbnail: { id: 'thumb-1', objectKey: 'user/thumb.webp', deletedAt: new Date() } };
+    const prisma: any = {
+      asset: { findFirst: jest.fn().mockResolvedValue(asset), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      $transaction: jest.fn(async (callback: any) => callback({ asset: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } })),
+    };
+    const storage: any = { deleteMany: jest.fn().mockResolvedValue(undefined) };
+    const quota: any = { releaseStorage: jest.fn().mockResolvedValue(undefined) };
+    const service = new AssetLifecycleService(prisma, storage, quota);
+
+    await expect(service.purge('user-1', 'source-1')).resolves.toEqual(asset);
+    expect(storage.deleteMany).toHaveBeenCalledWith(['user/source.png', 'user/thumb.webp']);
     expect(quota.releaseStorage).toHaveBeenCalledWith('user-1', 1000n);
+  });
+
+  it('purges expired trash items by purgeAfter', async () => {
+    const asset = { id: 'source-1', userId: 'user-1', objectKey: 'user/source.png', sizeBytes: 40n, thumbnail: null };
+    const prisma: any = {
+      asset: {
+        findMany: jest.fn().mockResolvedValueOnce([asset]).mockResolvedValueOnce([]),
+        updateMany: jest.fn(),
+      },
+      $transaction: jest.fn(async (callback: any) => callback({ asset: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } })),
+    };
+    const storage: any = { deleteMany: jest.fn().mockResolvedValue(undefined) };
+    const quota: any = { releaseStorage: jest.fn().mockResolvedValue(undefined) };
+    const service = new AssetLifecycleService(prisma, storage, quota);
+
+    await expect(service.purgeExpired()).resolves.toBe(1);
+    expect(prisma.asset.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ purgeAfter: { lte: expect.any(Date) }, purgedAt: null }),
+    }));
+    expect(storage.deleteMany).toHaveBeenCalledWith(['user/source.png']);
   });
 });

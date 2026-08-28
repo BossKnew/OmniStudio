@@ -16,7 +16,7 @@ export type LightboxImage = {
   prompt?: string | null;
   note?: string | null;
   sharedBy?: string | null;
-  sharedGroupName?: string | null;
+  sharedTeamName?: string | null;
 };
 
 export default function ImageLightbox({
@@ -58,7 +58,7 @@ export default function ImageLightbox({
         </div>
         {image.sharedBy ? <div className="viewer-detail-block">
           <p className="detail-label">{t('分享信息')}</p>
-          <p className="viewer-copy">{t('由')} {image.sharedBy}{image.sharedGroupName ? ` ${t('分享到')} ${image.sharedGroupName}` : ''}</p>
+          <p className="viewer-copy">{t('由')} {image.sharedBy}{image.sharedTeamName ? ` ${t('分享到')} ${image.sharedTeamName}` : ''}</p>
         </div> : <>
           <div className="viewer-detail-block">
             <p className="detail-label">{t('生成提示词')}</p>

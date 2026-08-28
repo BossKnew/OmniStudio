@@ -21,7 +21,7 @@ import { accessibleReferencedAssetWhere, accessibleSourceWhere } from './asset-a
 import { pointsForGeneration } from './generation-quota';
 
 const generationSchema = z.object({
-  prompt: safeText(8000), modelId: uuidSchema, mode: z.enum(['TEXT_TO_IMAGE', 'IMAGE_EDIT', 'INPAINT', 'TEXT_TO_VIDEO', 'IMAGE_TO_VIDEO']).optional(),
+  prompt: safeText(8000), modelId: uuidSchema, mode: z.enum(['TEXT_TO_IMAGE', 'IMAGE_EDIT', 'INPAINT', 'TEXT_TO_VIDEO', 'IMAGE_TO_VIDEO', 'FIRST_LAST_FRAME_TO_VIDEO']).optional(),
   size: z.string().max(64).optional(), quality: z.string().max(64).optional(), count: z.number().int().min(1).max(4).optional(),
   durationSeconds: z.number().int().min(1).max(60).optional(),
   sourceAssetIds: z.array(uuidSchema).max(8).optional(), maskAssetId: uuidSchema.nullish(), conversationId: uuidSchema.nullish(),
@@ -89,6 +89,7 @@ export class GenerationsController {
     if (mode === 'INPAINT' && !model.supportsInpaint) throw new BadRequestException('模型不支持局部重绘');
     if (mode === 'TEXT_TO_VIDEO' && !model.supportsGeneration) throw new BadRequestException('模型不支持文生视频');
     if (mode === 'IMAGE_TO_VIDEO' && !model.supportsEdit) throw new BadRequestException('模型不支持图生视频');
+    if (mode === 'FIRST_LAST_FRAME_TO_VIDEO' && !model.supportsFirstLastFrame) throw new BadRequestException('模型不支持首尾帧');
     const imageTiers = (model.resolutionTiers as ResolutionTier[]) ?? [];
     const allowedRatios = (model.allowedRatios as string[]) ?? [];
     const allowedSizes = (model.allowedSizes as string[]) ?? [];
@@ -102,15 +103,19 @@ export class GenerationsController {
     if (videoModel ? !allowedSizes.includes(size) : !imageSizeAllowed(imageTiers, allowedRatios, size)) throw new BadRequestException(videoModel ? '比例不受该模型支持' : '尺寸或质量不受该模型支持');
     if (allowedQualities.length ? !allowedQualities.includes(quality) : Boolean(body.quality)) throw new BadRequestException(videoModel ? '分辨率不受该模型支持' : '尺寸或质量不受该模型支持');
     if (videoModel && (typeof durationSeconds !== 'number' || !allowedDurations.includes(durationSeconds))) throw new BadRequestException('时长不受该模型支持');
-    const sourceIds = Array.isArray(body.sourceAssetIds) ? [...new Set(body.sourceAssetIds)] : [];
+    const sourceIds = Array.isArray(body.sourceAssetIds)
+      ? (mode === 'FIRST_LAST_FRAME_TO_VIDEO' ? body.sourceAssetIds : [...new Set(body.sourceAssetIds)])
+      : [];
     if (sourceIds.length > 8) throw new BadRequestException('参考图最多支持 8 张');
-    if (sourceIds.length > model.maxInputImages) throw new BadRequestException(`该模型最多支持 ${model.maxInputImages} 张参考图`);
+    if (mode !== 'FIRST_LAST_FRAME_TO_VIDEO' && sourceIds.length > model.maxInputImages) throw new BadRequestException(`该模型最多支持 ${model.maxInputImages} 张参考图`);
     if ((mode === 'TEXT_TO_IMAGE' || mode === 'TEXT_TO_VIDEO') && sourceIds.length) throw new BadRequestException(mode === 'TEXT_TO_VIDEO' ? '文生视频不支持参考图' : '文生图不支持参考图');
     const assetIds = [...sourceIds, ...(body.maskAssetId ? [body.maskAssetId] : [])];
     const assets = assetIds.length ? await this.prisma.asset.findMany({ where: { id: { in: assetIds }, ...accessibleReferencedAssetWhere(user) } }) : [];
     if (assets.length !== new Set(assetIds).size) throw new BadRequestException('引用图片不存在');
     if (assets.some((asset) => asset.mediaKind === 'VIDEO')) throw new BadRequestException('视频不能作为参考图');
-    if (mode !== 'TEXT_TO_IMAGE' && mode !== 'TEXT_TO_VIDEO' && !sourceIds.length) throw new BadRequestException(mode === 'IMAGE_TO_VIDEO' ? '图生视频必须提供参考图' : '编辑模式必须提供原图');
+    if (mode === 'FIRST_LAST_FRAME_TO_VIDEO' && sourceIds.length !== 2) throw new BadRequestException('首尾帧必须提供首帧和尾帧');
+    if (mode === 'IMAGE_TO_VIDEO' && !sourceIds.length) throw new BadRequestException('图生视频必须提供参考图');
+    if (mode !== 'TEXT_TO_IMAGE' && mode !== 'TEXT_TO_VIDEO' && mode !== 'IMAGE_TO_VIDEO' && mode !== 'FIRST_LAST_FRAME_TO_VIDEO' && !sourceIds.length) throw new BadRequestException('编辑模式必须提供原图');
     if (mode === 'INPAINT' && !body.maskAssetId) throw new BadRequestException('局部重绘必须提供遮罩');
     if (videoModel && body.maskAssetId) throw new BadRequestException('视频生成不支持遮罩');
     let conversationId = body.conversationId;

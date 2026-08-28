@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import { FormData as UndiciFormData } from 'undici';
 import { VIDEO_POLL_INTERVAL_MS, MAX_VIDEO_BYTES, isVideoAdapterKind } from './domain-constants';
 import { MAX_ERROR_BYTES } from './safe-http.service';
@@ -13,6 +14,18 @@ import {
   type MediaGenerationRequest,
   type VideoAdapterDeps,
 } from './provider-adapter';
+import {
+  fluxApiRoot,
+  fluxHeaders,
+  fluxPollingUrl,
+  fluxTaskId,
+  fluxTaskToken,
+  fluxVideoAspect,
+  fluxVideoPath,
+  fluxVideoResolution,
+  pollFluxUntilReady,
+  testFluxConnection,
+} from './flux';
 function providerErrorCode(body?: Buffer) {
   if (!body?.length) return undefined;
   try {
@@ -139,6 +152,21 @@ export function openaiVideoStatus(payload: unknown) {
   return text(jsonObject(payload)?.status)?.toLowerCase();
 }
 
+/** Official Sora sizes are WxH tokens, not named ratios. */
+export function openaiVideoSize(size: string, quality?: string) {
+  const raw = size.trim();
+  const exact = /^(720x1280|1280x720|1024x1792|1792x1024)$/i.test(raw);
+  if (exact) return raw.replace(/X/, 'x');
+  const landscape = /^(16:9|1280:720|1920:1080)$/i.test(raw);
+  const portrait = /^(9:16|720:1280|1080:1920)$/i.test(raw);
+  const hi = typeof quality === 'string' && /^(1080p|fhd|2k|high|1792)/i.test(quality.trim());
+  if (landscape) return hi ? '1792x1024' : '1280x720';
+  if (portrait) return hi ? '1024x1792' : '720x1280';
+  const pixels = /^(\d{3,5})[xX×:](\d{3,5})$/.exec(raw);
+  if (pixels) return Number(pixels[1]) >= Number(pixels[2]) ? (hi ? '1792x1024' : '1280x720') : (hi ? '1024x1792' : '720x1280');
+  return raw;
+}
+
 export function seedanceTaskId(payload: unknown) {
   const object = jsonObject(payload);
   return text(object?.id) ?? text(jsonObject(object?.data)?.id);
@@ -204,13 +232,190 @@ export function wanParameters(parameters: Record<string, unknown>) {
 }
 
 export function wanInput(request: MediaGenerationRequest) {
-  const source = firstSource(request);
+  const sources = request.inputAssets.filter((asset) => asset.role === 'SOURCE');
   const input: Json = { prompt: request.prompt };
-  if (!source) return input;
-  const url = dataUrl(source);
-  if (/wan2\.7/i.test(request.upstreamModelId)) input.media = [{ type: 'first_frame', url }];
-  else input.img_url = url;
+  if (!sources.length) return input;
+  if (/wan2\.7|wan3/i.test(request.upstreamModelId)) {
+    const media: Json[] = [{ type: 'first_frame', url: dataUrl(sources[0]) }];
+    if (sources[1]) media.push({ type: 'last_frame', url: dataUrl(sources[1]) });
+    input.media = media;
+  } else {
+    input.img_url = dataUrl(sources[0]);
+  }
   return input;
+}
+
+export function veoApiRoot(baseUrl: string) {
+  let url = baseUrl.trim().replace(/\/+$/, '');
+  if (/^https:\/\/generativelanguage\.googleapis\.com$/i.test(url)) url += '/v1beta';
+  return url.replace(/\/+$/, '');
+}
+
+export function veoOperationUrl(root: string, taskId: string) {
+  const name = taskId.trim().replace(/^\//, '');
+  if (/^https?:\/\//i.test(name)) return name;
+  if (/^(operations|models)\//i.test(name)) return `${root}/${name}`;
+  return `${root}/operations/${name}`;
+}
+
+export function veoResolution(value: string) {
+  const trimmed = value.trim();
+  if (/^4k$/i.test(trimmed)) return '4k';
+  const match = /^(720|1080)p$/i.exec(trimmed);
+  return match ? `${match[1]}p` : trimmed;
+}
+
+export function veoOperationName(payload: unknown) {
+  return text(jsonObject(payload)?.name);
+}
+
+export function veoVideoUri(payload: unknown) {
+  return pickString(payload, ['uri']);
+}
+
+export function veoVideoBase64(payload: unknown) {
+  return pickString(payload, ['bytesBase64Encoded', 'videoBytes']);
+}
+
+function veoImage(asset: { mimeType: string; bytes: Uint8Array }) {
+  const mime = asset.mimeType === 'image/jpeg' || asset.mimeType === 'image/webp' ? asset.mimeType : 'image/png';
+  return { bytesBase64Encoded: Buffer.from(asset.bytes).toString('base64'), mimeType: mime };
+}
+
+function bearerToken(headers: Record<string, string>) {
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() === 'authorization') return value.replace(/^Bearer\s+/i, '').trim();
+  }
+  return '';
+}
+
+export function minimaxApiRoot(baseUrl: string) {
+  return baseUrl.trim().replace(/\/+$/, '').replace(/\/v[12](?:\/.*)?$/i, '');
+}
+
+export function minimaxResolution(value: string) {
+  const trimmed = value.trim();
+  if (/^2k$/i.test(trimmed)) return '2K';
+  if (/^768p$/i.test(trimmed)) return '768P';
+  if (/^1080p$/i.test(trimmed)) return '1080P';
+  return trimmed;
+}
+
+export function minimaxTaskId(payload: unknown) {
+  const object = jsonObject(payload);
+  return text(object?.task_id) ?? text(jsonObject(object?.task)?.id) ?? text(object?.id);
+}
+
+export function minimaxTaskStatus(payload: unknown) {
+  const object = jsonObject(payload);
+  const task = jsonObject(object?.task) ?? object;
+  return text(task?.status)?.toLowerCase();
+}
+
+export function minimaxVideoUrl(payload: unknown) {
+  const object = jsonObject(payload);
+  const task = jsonObject(object?.task) ?? object;
+  return text(jsonObject(task?.content)?.url) ?? pickString(payload, ['url']);
+}
+
+export function runwayApiRoot(baseUrl: string) {
+  let url = baseUrl.trim().replace(/\/+$/, '');
+  url = url.replace(/\/v1(?:\/.*)?$/i, '');
+  return url.replace(/\/+$/, '');
+}
+
+export function runwayHeaders(headers: Record<string, string>, extra?: Record<string, string>) {
+  const result: Record<string, string> = { ...headers, ...extra };
+  if (!Object.keys(result).some((name) => name.toLowerCase() === 'x-runway-version')) {
+    result['X-Runway-Version'] = '2024-11-06';
+  }
+  return result;
+}
+
+export function runwayRatio(value: string) {
+  const trimmed = value.trim();
+  const named: Record<string, string> = {
+    '16:9': '1280:720',
+    '9:16': '720:1280',
+    '1:1': '960:960',
+    '4:3': '1104:832',
+    '3:4': '832:1104',
+    '21:9': '1584:672',
+    '3:2': '1280:768',
+    '2:3': '768:1280',
+  };
+  if (named[trimmed]) return named[trimmed];
+  const pixels = /^(\d{3,5})[:xX×](\d{3,5})$/.exec(trimmed);
+  if (pixels && Number(pixels[1]) >= 256 && Number(pixels[2]) >= 256) return `${pixels[1]}:${pixels[2]}`;
+  return trimmed;
+}
+
+export function runwayTaskId(payload: unknown) {
+  return text(jsonObject(payload)?.id);
+}
+
+export function runwayStatus(payload: unknown) {
+  return text(jsonObject(payload)?.status)?.toUpperCase();
+}
+
+export function runwayOutputUrl(payload: unknown) {
+  const object = jsonObject(payload);
+  const output = object?.output;
+  if (typeof output === 'string' && output.trim()) return output.trim();
+  if (Array.isArray(output)) {
+    for (const item of output) {
+      if (typeof item === 'string' && item.trim()) return item.trim();
+      const nested = text(jsonObject(item)?.url) ?? text(jsonObject(item)?.uri);
+      if (nested) return nested;
+    }
+  }
+  return pickString(payload, ['url']);
+}
+
+export function runwayVideoUrl(payload: unknown) {
+  return runwayOutputUrl(payload);
+}
+
+export async function testRunwayConnection(deps: Pick<VideoAdapterDeps, 'http' | 'headers' | 'baseUrl' | 'timeoutSeconds'>) {
+  try {
+    const response = await deps.http.request(`${runwayApiRoot(deps.baseUrl)}/v1/tasks/00000000-0000-4000-8000-000000000000`, {
+      method: 'GET',
+      headers: runwayHeaders(deps.headers),
+      redirectPolicy: 'same-origin',
+      signal: AbortSignal.timeout(Math.min(Math.max(deps.timeoutSeconds, 10), 30) * 1000),
+    }, MAX_ERROR_BYTES);
+    if (response.status === 401 || response.status === 403) return { ok: false, status: response.status, message: '供应商认证失败，请检查 API Key 是否来自 Runway Dev，以及 Base URL 是否为 https://api.dev.runwayml.com' };
+    return { ok: true, status: response.status };
+  } catch {
+    return { ok: false, message: '供应商连接失败' };
+  }
+}
+
+
+
+function throwIfMinimaxFailed(payload: unknown) {
+  const object = jsonObject(payload);
+  const resp = jsonObject(object?.base_resp);
+  const code = resp?.status_code;
+  if (typeof code === 'number' && code !== 0) {
+    const detail = text(resp?.status_msg);
+    const error: any = new Error(detail || `供应商返回 ${code}`);
+    error.noRetry = true;
+    error.providerFailure = {
+      code: 'PROVIDER_PARAMETERS',
+      message: detail ? `供应商拒绝了视频或模型参数：${detail}` : '供应商拒绝了视频或模型参数，请管理员检查模型 ID、比例、时长和分辨率',
+    };
+    throw error;
+  }
+}
+
+function veoHeaders(deps: VideoAdapterDeps, extra?: Record<string, string>) {
+  const headers = requestHeaders(deps, extra);
+  const key = bearerToken(headers);
+  if (key && !Object.keys(headers).some((name) => name.toLowerCase() === 'x-goog-api-key')) {
+    headers['x-goog-api-key'] = key;
+  }
+  return headers;
 }
 
 abstract class BaseVideoAdapter implements MediaGenerationAdapter {
@@ -241,10 +446,14 @@ abstract class BaseVideoAdapter implements MediaGenerationAdapter {
     return (this.deps.now ?? Date.now)() >= this.deadline();
   }
 
+  protected headers(extra?: Record<string, string>) {
+    return requestHeaders(this.deps, extra);
+  }
+
   protected async getJson(url: string) {
     const response = await this.deps.http.request(url, {
       method: 'GET',
-      headers: requestHeaders(this.deps),
+      headers: this.headers(),
       redirectPolicy: 'same-origin',
       ...this.abort('short'),
     }, MAX_ERROR_BYTES);
@@ -257,7 +466,7 @@ abstract class BaseVideoAdapter implements MediaGenerationAdapter {
   protected async postJson(url: string, body: unknown, extraHeaders?: Record<string, string>) {
     const response = await this.deps.http.request(url, {
       method: 'POST',
-      headers: requestHeaders(this.deps, { 'Content-Type': 'application/json', ...extraHeaders }),
+      headers: this.headers({ 'Content-Type': 'application/json', ...extraHeaders }),
       body: JSON.stringify(body),
       redirectPolicy: 'same-origin',
       ...this.abort('long'),
@@ -268,14 +477,14 @@ abstract class BaseVideoAdapter implements MediaGenerationAdapter {
     return payload;
   }
 
-  protected async downloadVideo(url: string, credentialed = false) {
+  protected async downloadVideo(url: string, credentialed = false, followCrossOrigin = false) {
     const destination = this.deps.createStagingPath
       ? await this.deps.createStagingPath('.mp4')
       : undefined;
     const init = {
       method: 'GET' as const,
-      headers: credentialed ? requestHeaders(this.deps) : undefined,
-      redirectPolicy: credentialed ? 'same-origin' as const : 'any' as const,
+      headers: credentialed ? this.headers() : undefined,
+      redirectPolicy: credentialed && !followCrossOrigin ? 'same-origin' as const : 'any' as const,
       ...this.abort('long'),
     };
     if (!destination) {
@@ -305,8 +514,7 @@ class OpenAIVideosAdapter extends BaseVideoAdapter {
       model: request.upstreamModelId,
       prompt: request.prompt,
       seconds: String(seconds),
-      ...(size ? { size } : {}),
-      ...(quality ? { quality } : {}),
+      ...(size ? { size: openaiVideoSize(size, quality) } : {}),
     };
     let body: unknown = JSON.stringify(payload);
     const extra: Record<string, string> = {};
@@ -318,7 +526,7 @@ class OpenAIVideosAdapter extends BaseVideoAdapter {
     } else extra['Content-Type'] = 'application/json';
     const response = await this.deps.http.request(`${this.deps.baseUrl}/videos`, {
       method: 'POST',
-      headers: requestHeaders(this.deps, extra),
+      headers: this.headers(extra),
       body: body as any,
       redirectPolicy: 'same-origin',
       ...this.abort('long'),
@@ -354,9 +562,10 @@ class SeedanceAdapter extends BaseVideoAdapter {
   readonly kind = 'seedance';
 
   async createTask(request: MediaGenerationRequest) {
-    const source = firstSource(request);
+    const sources = request.inputAssets.filter((asset) => asset.role === 'SOURCE');
     const content: Json[] = [{ type: 'text', text: request.prompt }];
-    if (source) content.push({ type: 'image_url', image_url: { url: dataUrl(source) }, role: 'first_frame' });
+    if (sources[0]) content.push({ type: 'image_url', image_url: { url: dataUrl(sources[0]) }, role: 'first_frame' });
+    if (sources[1]) content.push({ type: 'image_url', image_url: { url: dataUrl(sources[1]) }, role: 'last_frame' });
     const ratio = aspectRatioOf(request.parameters);
     const resolution = resolutionOf(request.parameters);
     const payload = await this.postJson(`${this.deps.baseUrl}/contents/generations/tasks`, {
@@ -398,7 +607,7 @@ class SeedanceAdapter extends BaseVideoAdapter {
     try {
       const response = await this.deps.http.request(`${this.deps.baseUrl}/contents/generations/tasks`, {
         method: 'GET',
-        headers: requestHeaders(this.deps),
+        headers: this.headers(),
         redirectPolicy: 'same-origin',
         ...this.abort('short'),
       }, MAX_ERROR_BYTES);
@@ -454,11 +663,264 @@ class WanAdapter extends BaseVideoAdapter {
     try {
       const response = await this.deps.http.request(`${wanApiRoot(this.deps.baseUrl)}/tasks/0`, {
         method: 'GET',
-        headers: requestHeaders(this.deps),
+        headers: this.headers(),
         redirectPolicy: 'same-origin',
         ...this.abort('short'),
       }, MAX_ERROR_BYTES);
       if (response.status === 401 || response.status === 403) return { ok: false, status: response.status, message: '供应商认证失败，请检查 API Key、令牌分组及访问权限' };
+      return { ok: true, status: response.status };
+    } catch {
+      return { ok: false, message: '供应商连接失败' };
+    }
+  }
+}
+
+class VeoAdapter extends BaseVideoAdapter {
+  readonly kind = 'veo';
+
+  protected headers(extra?: Record<string, string>) {
+    return veoHeaders(this.deps, extra);
+  }
+
+  async createTask(request: MediaGenerationRequest) {
+    const root = veoApiRoot(this.deps.baseUrl);
+    const sources = request.inputAssets.filter((asset) => asset.role === 'SOURCE');
+    const instance: Json = { prompt: request.prompt };
+    if (sources[0]) instance.image = veoImage(sources[0]);
+    const references = sources.slice(1, 4);
+    if (references.length) instance.referenceImages = references.map((asset) => ({ image: veoImage(asset), referenceType: 'asset' }));
+    const parameters: Json = {};
+    const aspect = aspectRatioOf(request.parameters);
+    if (aspect) parameters.aspectRatio = aspect;
+    const duration = durationSecondsOf(request.parameters);
+    if (duration) parameters.durationSeconds = duration;
+    const resolution = resolutionOf(request.parameters);
+    if (resolution) parameters.resolution = veoResolution(resolution);
+    const payload = await this.postJson(`${root}/models/${request.upstreamModelId}:predictLongRunning`, {
+      instances: [instance],
+      ...(Object.keys(parameters).length ? { parameters } : {}),
+    });
+    const error = jsonObject(jsonObject(payload)?.error);
+    if (error) {
+      const detail = text(error.message);
+      const failure: any = new Error(detail || '供应商拒绝了视频或模型参数');
+      failure.noRetry = true;
+      failure.providerFailure = { code: 'PROVIDER_PARAMETERS', message: detail ? `供应商拒绝了视频或模型参数：${detail}` : '供应商拒绝了视频或模型参数，请管理员检查模型 ID、比例、时长和分辨率' };
+      throw failure;
+    }
+    const id = veoOperationName(payload);
+    if (!id) throw providerProtocolError('供应商未返回视频任务 ID');
+    return id;
+  }
+
+  async collect(taskId: string, _request?: MediaGenerationRequest) {
+    const root = veoApiRoot(this.deps.baseUrl);
+    while (true) {
+      if (this.timedOut()) throw providerTimeoutError();
+      const payload = await this.getJson(veoOperationUrl(root, taskId));
+      const error = jsonObject(jsonObject(payload)?.error);
+      if (error) {
+        const detail = text(error.message);
+        const failure: any = new Error(detail || '供应商视频任务失败');
+        failure.noRetry = true;
+        failure.providerFailure = { code: 'PROVIDER_PARAMETERS', message: detail ? `供应商视频任务失败：${detail}` : '供应商视频任务失败，请调整提示词或参考图后重试' };
+        throw failure;
+      }
+      if (jsonObject(payload)?.done === true) {
+        const inline = veoVideoBase64(payload);
+        if (inline) {
+          const bytes = Buffer.from(inline, 'base64');
+          if (this.deps.createStagingPath) {
+            const path = await this.deps.createStagingPath('.mp4');
+            await writeFile(path, bytes, { flag: 'wx' });
+            return [{ mimeType: 'video/mp4' as const, path }];
+          }
+          return [{ mimeType: 'video/mp4' as const, bytes: new Uint8Array(bytes) }];
+        }
+        const uri = veoVideoUri(payload);
+        if (!uri) throw providerProtocolError('供应商未返回视频地址');
+        return [await this.downloadVideo(uri, true, true)];
+      }
+      await this.wait();
+    }
+  }
+
+  async testConnection() {
+    try {
+      const response = await this.deps.http.request(`${veoApiRoot(this.deps.baseUrl)}/models`, {
+        method: 'GET',
+        headers: this.headers(),
+        redirectPolicy: 'same-origin',
+        ...this.abort('short'),
+      }, MAX_ERROR_BYTES);
+      if (response.status === 401 || response.status === 403) return { ok: false, status: response.status, message: '供应商认证失败，请检查 API Key 是否来自 Google AI Studio，以及 Base URL 是否为 https://generativelanguage.googleapis.com/v1beta' };
+      if (response.status === 404) return { ok: false, status: response.status, message: '模型列表接口不存在，请检查 Base URL 是否为 https://generativelanguage.googleapis.com/v1beta' };
+      return { ok: true, status: response.status };
+    } catch {
+      return { ok: false, message: '供应商连接失败' };
+    }
+  }
+}
+
+class RunwayAdapter extends BaseVideoAdapter {
+  readonly kind = 'runway';
+
+  protected headers(extra?: Record<string, string>) {
+    return runwayHeaders(super.headers(extra));
+  }
+
+  async createTask(request: MediaGenerationRequest) {
+    const root = runwayApiRoot(this.deps.baseUrl);
+    const sources = request.inputAssets.filter((asset) => asset.role === 'SOURCE');
+    const payload: Json = {
+      model: request.upstreamModelId,
+      promptText: request.prompt,
+    };
+    const ratio = aspectRatioOf(request.parameters);
+    if (ratio) payload.ratio = runwayRatio(ratio);
+    const duration = durationSecondsOf(request.parameters);
+    if (duration) payload.duration = duration;
+    const path = sources[0] ? '/v1/image_to_video' : '/v1/text_to_video';
+    if (sources[0]) {
+      payload.promptImage = sources.length === 1
+        ? dataUrl(sources[0])
+        : sources.slice(0, 2).map((asset, index) => ({ uri: dataUrl(asset), position: index === 0 ? 'first' : 'last' }));
+    }
+    const result = await this.postJson(`${root}${path}`, payload);
+    const id = runwayTaskId(result);
+    if (!id) throw providerProtocolError('供应商未返回视频任务 ID');
+    return id;
+  }
+
+  async collect(taskId: string, _request?: MediaGenerationRequest) {
+    const root = runwayApiRoot(this.deps.baseUrl);
+    while (true) {
+      if (this.timedOut()) throw providerTimeoutError();
+      const payload = await this.getJson(`${root}/v1/tasks/${encodeURIComponent(taskId)}`);
+      const status = runwayStatus(payload);
+      if (status === 'SUCCEEDED' || status === 'SUCCESS' || status === 'COMPLETED') {
+        const url = runwayVideoUrl(payload);
+        if (!url) throw providerProtocolError('供应商未返回视频地址');
+        return [await this.downloadVideo(url)];
+      }
+      if (status === 'FAILED' || status === 'CANCELED' || status === 'CANCELLED') {
+        const detail = text(jsonObject(payload)?.failure) ?? text(jsonObject(jsonObject(payload)?.error)?.message) ?? text(jsonObject(payload)?.error);
+        const error: any = new Error(detail || '供应商视频任务失败');
+        error.noRetry = true;
+        error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: detail ? `供应商视频任务失败：${detail}` : '供应商视频任务失败，请调整提示词或参考图后重试' };
+        throw error;
+      }
+      await this.wait();
+    }
+  }
+
+  async testConnection() {
+    return testRunwayConnection(this.deps);
+  }
+}
+
+class FluxVideoAdapter extends BaseVideoAdapter {
+  readonly kind = 'flux-video';
+
+  protected headers(extra?: Record<string, string>) {
+    return fluxHeaders(super.headers(extra));
+  }
+
+  async createTask(request: MediaGenerationRequest) {
+    const sources = request.inputAssets.filter((asset) => asset.role === 'SOURCE');
+    const payload: Json = {
+      mode: sources.length ? 'i2v' : 't2v',
+      prompt: request.prompt,
+    };
+    const aspect = fluxVideoAspect(aspectRatioOf(request.parameters));
+    if (aspect) payload.aspect_ratio = aspect;
+    const duration = durationSecondsOf(request.parameters);
+    if (duration >= 5 && duration <= 20) payload.duration = duration;
+    const resolution = resolutionOf(request.parameters);
+    if (resolution) payload.resolution = fluxVideoResolution(resolution);
+    if (sources.length === 1) payload.keyframes = dataUrl(sources[0]);
+    else if (sources.length === 2) payload.keyframes = [dataUrl(sources[0]), dataUrl(sources[1])];
+    else if (sources.length > 2) {
+      const span = typeof payload.duration === 'number' ? payload.duration : 10;
+      const last = Math.min(sources.length, 10) - 1;
+      payload.keyframes = sources.slice(0, 10).map((asset, index) => [
+        last <= 0 ? 0 : Math.round((span * index / last) * 10) / 10,
+        dataUrl(asset),
+      ]);
+    }
+    const result = await this.postJson(`${fluxApiRoot(this.deps.baseUrl)}/${fluxVideoPath(request.upstreamModelId)}`, payload);
+    const id = fluxTaskId(result);
+    if (!id) throw providerProtocolError('供应商未返回视频任务 ID');
+    return fluxTaskToken(id, fluxPollingUrl(result));
+  }
+
+  async collect(taskId: string, _request?: MediaGenerationRequest) {
+    const url = await pollFluxUntilReady(this.deps, taskId);
+    return [await this.downloadVideo(url)];
+  }
+
+  async testConnection() {
+    return testFluxConnection(this.deps);
+  }
+}
+
+class MiniMaxH3Adapter extends BaseVideoAdapter {
+  readonly kind = 'minimax';
+
+  async createTask(request: MediaGenerationRequest) {
+    const sources = request.inputAssets.filter((asset) => asset.role === 'SOURCE');
+    const content: Json[] = [{ type: 'text', text: request.prompt }];
+    if (sources[0]) content.push({ type: 'image_url', image_url: { url: dataUrl(sources[0]) }, role: 'first_frame' });
+    if (sources[1]) content.push({ type: 'image_url', image_url: { url: dataUrl(sources[1]) }, role: 'last_frame' });
+    const ratio = aspectRatioOf(request.parameters);
+    const resolution = resolutionOf(request.parameters);
+    const payload = await this.postJson(`${minimaxApiRoot(this.deps.baseUrl)}/v2/video_generation`, {
+      model: request.upstreamModelId,
+      content,
+      duration: durationSecondsOf(request.parameters),
+      ...(resolution ? { resolution: minimaxResolution(resolution) } : {}),
+      ...(!sources.length && ratio ? { ratio } : {}),
+    });
+    throwIfMinimaxFailed(payload);
+    const id = minimaxTaskId(payload);
+    if (!id) throw providerProtocolError('供应商未返回视频任务 ID');
+    return id;
+  }
+
+  async collect(taskId: string, _request?: MediaGenerationRequest) {
+    const root = minimaxApiRoot(this.deps.baseUrl);
+    while (true) {
+      if (this.timedOut()) throw providerTimeoutError();
+      const payload = await this.getJson(`${root}/v2/query/video_generation/${taskId}`);
+      throwIfMinimaxFailed(payload);
+      const status = minimaxTaskStatus(payload);
+      if (status === 'succeeded' || status === 'success' || status === 'completed') {
+        const url = minimaxVideoUrl(payload);
+        if (!url) throw providerProtocolError('供应商未返回视频地址');
+        return [await this.downloadVideo(url)];
+      }
+      if (status === 'failed' || status === 'cancelled' || status === 'canceled') {
+        const task = jsonObject(jsonObject(payload)?.task) ?? jsonObject(payload);
+        const detail = text(jsonObject(task?.error)?.message) ?? text(task?.error);
+        const error: any = new Error(detail || '供应商视频任务失败');
+        error.noRetry = true;
+        error.providerFailure = { code: 'PROVIDER_PARAMETERS', message: detail ? `供应商视频任务失败：${detail}` : '供应商视频任务失败，请调整提示词或参考图后重试' };
+        throw error;
+      }
+      await this.wait();
+    }
+  }
+
+  async testConnection() {
+    try {
+      const response = await this.deps.http.request(`${minimaxApiRoot(this.deps.baseUrl)}/v2/query/video_generation?page_num=1&page_size=1`, {
+        method: 'GET',
+        headers: this.headers(),
+        redirectPolicy: 'same-origin',
+        ...this.abort('short'),
+      }, MAX_ERROR_BYTES);
+      if (response.status === 401 || response.status === 403) return { ok: false, status: response.status, message: '供应商认证失败，请检查 API Key 是否来自 MiniMax 开放平台' };
+      if (response.status === 404) return { ok: false, status: response.status, message: '任务查询接口不存在，请检查 Base URL 是否为 https://api.minimaxi.com 或 https://api.minimax.io' };
       return { ok: true, status: response.status };
     } catch {
       return { ok: false, message: '供应商连接失败' };
@@ -495,6 +957,10 @@ export function createVideoAdapter(kind: string, deps: VideoAdapterDeps): MediaG
   if (kind === 'openai-videos') return new OpenAIVideosAdapter(deps);
   if (kind === 'seedance') return new SeedanceAdapter(deps);
   if (kind === 'wan') return new WanAdapter(deps);
+  if (kind === 'veo') return new VeoAdapter(deps);
+  if (kind === 'minimax') return new MiniMaxH3Adapter(deps);
+  if (kind === 'runway') return new RunwayAdapter(deps);
+  if (kind === 'flux-video') return new FluxVideoAdapter(deps);
   throw new Error(`未知视频适配器：${kind}`);
 }
 

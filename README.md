@@ -2,15 +2,15 @@
 
 English | [简体中文](README_zh.md)
 
-OmniStudio is a self-hosted image and video generation workspace for teams: text-to-image, full-image editing, masked inpainting, text-to-video, and image-to-video, with a built-in asset library, quota management, user groups, and model access control.
+OmniStudio is a self-hosted image and video generation workspace for teams: text-to-image, full-image editing, masked inpainting, text-to-video, image-to-video, and first-and-last-frame video, with a built-in asset library, quota management, user groups, work teams, and model access control.
 
 ## ✨ Features
 
-- **Generation**: text-to-image, reference-image editing, masked inpainting, text-to-video, image-to-video
-- **Providers**: OpenAI Images-compatible APIs and Qwen-Image (DashScope 千问生图); OpenAI Videos, Seedance (Volcengine Ark), and Wan (DashScope) video adapters — gateways speaking the OpenAI Videos protocol can reuse that adapter
-- **Studio**: image/video mode switching, history, regenerate, retry, download, references, and mask drawing
-- **Assets**: conversations, asset library, group-shared references, thumbnails, storage quotas
-- **Administration**: user approval, user groups, model access control, per-group points-based generation quotas (model price × count / seconds, shared by images and video)
+- **Generation**: text-to-image, reference-image editing, masked inpainting, text-to-video, image-to-video, first-and-last-frame video
+- **Providers**: credentials and a Base URL only. Each model picks a media type and adapter — OpenAI Images, Qwen/Wan, Nano Banana, Seedream, Midjourney, Flux, or Runway for images; Sora, Seedance, Wan/HappyHorse, Veo, MiniMax, Runway, or Flux for video. Gateways speaking the OpenAI Videos protocol can reuse that adapter. One Google AI Studio key can host both Nano Banana and Veo; one Volcengine Ark key can host Seedream and Seedance; one BFL key can host Flux image and video; one Runway key can host Runway image and video. Midjourney uses a midjourney-proxy-compatible gateway (there is no official Midjourney API).
+- **Studio**: image/video mode switching, history, regenerate, retry, download, references, first/last frames, and mask drawing
+- **Assets**: conversations, asset library (filter by type, source, model, date, and notes/prompts), work-team-shared references, thumbnails, storage quotas
+- **Administration**: user approval, user groups for model access, work teams for asset sharing, per-group points-based generation quotas (model price × count / seconds, shared by images and video)
 - **Prompt polishing**: text-to-image, image-edit, and text-to-video, with multiple configurable providers
 - **Security**: mandatory admin MFA, encrypted API keys and MFA secrets, SSRF protection, rate limiting, CSRF protection
 - **UI**: English and Chinese

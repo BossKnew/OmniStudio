@@ -4,8 +4,9 @@ import GenerationSettings from '@/components/GenerationSettings';
 import MaskCanvas from '@/components/MaskCanvas';
 import PromptHistory from '@/components/PromptHistory';
 import { buildResolutionMatrix, firstImageSize, parseSize, type ResolutionTier } from '@/lib/resolution-options';
-import type { Asset, GenerationCreated, GenerationMode, GenerationReuse, MediaKind, ReferenceSelection, StudioModel } from '@/lib/studio-types';
+import { assignFrameRoles, firstLastReferences, isVideoGenerationMode, sameReferenceSelection, type Asset, type FrameRole, type GenerationCreated, type GenerationMode, type GenerationReuse, type MediaKind, type ReferenceSelection, type StudioModel } from '@/lib/studio-types';
 import Icon from '@/components/Icon';
+import Toast, { useToast } from '@/components/Toast';
 import type { OptionLabelMap } from '@/lib/option-labels';
 import { useI18n } from '@/lib/i18n';
 
@@ -41,6 +42,7 @@ type StudioComposerProps = {
 
 export default function StudioComposer({ models, optionLabels = {}, conversationId, references, onReferencesChange, reusePreset, onReuseConsumed, onCreated }: StudioComposerProps) {
   const { t } = useI18n();
+  const { toast, showToast } = useToast();
   const [prompt, setPrompt] = useState('');
   const [modelId, setModelId] = useState('');
   const [mode, setMode] = useState<GenerationMode>('TEXT_TO_IMAGE');
@@ -61,6 +63,8 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
   const hasSource = references.length > 0;
   const maxInputImages = model?.maxInputImages ?? 8;
   const primaryReference = references[0];
+  const firstLast = mode === 'FIRST_LAST_FRAME_TO_VIDEO';
+  const { first: firstFrame, last: lastFrame } = firstLastReferences(references);
 
   useEffect(() => {
     if (model || !visibleModels[0]) return;
@@ -71,7 +75,7 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
     if (!reusePreset) return;
     const targetModel = reusePreset.modelId ? models.find((item) => item.id === reusePreset.modelId) : undefined;
     const warnings: string[] = [];
-    const nextKind: MediaKind = reusePreset.mode === 'TEXT_TO_VIDEO' || reusePreset.mode === 'IMAGE_TO_VIDEO' ? 'VIDEO' : 'IMAGE';
+    const nextKind: MediaKind = isVideoGenerationMode(reusePreset.mode) ? 'VIDEO' : 'IMAGE';
     setMediaKind(nextKind);
     setPrompt(reusePreset.prompt);
     setMode(reusePreset.mode);
@@ -98,8 +102,12 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
         warnings.push(t('历史任务的编辑模式已不再受当前模型支持，请重新选择模型。'));
       }
       if (reusePreset.mode === 'IMAGE_TO_VIDEO' && !targetModel.supportsEdit) {
-        setMode('TEXT_TO_VIDEO');
+        setMode(targetModel.supportsFirstLastFrame ? 'FIRST_LAST_FRAME_TO_VIDEO' : 'TEXT_TO_VIDEO');
         warnings.push(t('历史任务的图生视频已不再受当前模型支持，请重新选择模型。'));
+      }
+      if (reusePreset.mode === 'FIRST_LAST_FRAME_TO_VIDEO' && !targetModel.supportsFirstLastFrame) {
+        setMode(targetModel.supportsEdit ? 'IMAGE_TO_VIDEO' : 'TEXT_TO_VIDEO');
+        warnings.push(t('历史任务的首尾帧已不再受当前模型支持，请重新选择模型。'));
       }
     } else {
       warnings.push(t('历史任务使用的模型') + '“' + reusePreset.modelDisplayName + '”' + t('已不可用，请重新选择模型。'));
@@ -109,6 +117,17 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
     onReuseConsumed();
   }, [models, onReferencesChange, onReuseConsumed, reusePreset, t]);
 
+  useEffect(() => {
+    if (!firstLast) {
+      if (references.some((item) => item.frameRole)) onReferencesChange(references.map((item) => item.frameRole ? { ...item, frameRole: undefined } : item));
+      return;
+    }
+    const next = assignFrameRoles(references);
+    if (sameReferenceSelection(references, next)) return;
+    if (references.length > next.length) setError(t('首尾帧只需首帧和尾帧各一张'));
+    onReferencesChange(next);
+  }, [firstLast, references, onReferencesChange, t]);
+
   function chooseModel(item: StudioModel) {
     setModelId(item.id);
     const videoModel = (item.mediaKind ?? 'IMAGE') === 'VIDEO';
@@ -117,8 +136,14 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
     setDuration(item.defaults.durationSeconds ?? item.allowedDurations?.[0] ?? 5);
     setCount(item.defaults.count ?? 1);
     setMode((current) => {
-      if ((item.mediaKind ?? 'IMAGE') === 'VIDEO') return current === 'IMAGE_TO_VIDEO' && item.supportsEdit ? 'IMAGE_TO_VIDEO' : 'TEXT_TO_VIDEO';
-      return current === 'IMAGE_EDIT' && !item.supportsEdit || current === 'INPAINT' && !item.supportsInpaint ? 'TEXT_TO_IMAGE' : current === 'TEXT_TO_VIDEO' || current === 'IMAGE_TO_VIDEO' ? 'TEXT_TO_IMAGE' : current;
+      if ((item.mediaKind ?? 'IMAGE') === 'VIDEO') {
+        if (current === 'FIRST_LAST_FRAME_TO_VIDEO' && item.supportsFirstLastFrame) return current;
+        if (current === 'IMAGE_TO_VIDEO' && item.supportsEdit) return current;
+        if (current === 'FIRST_LAST_FRAME_TO_VIDEO' && item.supportsEdit) return 'IMAGE_TO_VIDEO';
+        if (current === 'IMAGE_TO_VIDEO' && item.supportsFirstLastFrame) return 'FIRST_LAST_FRAME_TO_VIDEO';
+        return 'TEXT_TO_VIDEO';
+      }
+      return current === 'IMAGE_EDIT' && !item.supportsEdit || current === 'INPAINT' && !item.supportsInpaint ? 'TEXT_TO_IMAGE' : isVideoGenerationMode(current) ? 'TEXT_TO_IMAGE' : current;
     });
   }
 
@@ -152,12 +177,12 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
   async function polishPrompt() {
     const sourcePrompt = prompt.trim();
     if (!sourcePrompt) {
-      setError(t('提示词不能为空'));
+      showToast('error', t('提示词不能为空'));
       return;
     }
     const editing = mode === 'IMAGE_EDIT';
     if (editing && !primaryReference) {
-      setError(t('请选择或上传一张原图'));
+      showToast('error', t('请选择或上传一张原图'));
       return;
     }
     if (editing ? !confirm(t('确定润色当前提示词？将调用润色模型改写内容，并把当前参考图作为润色的一部分发送给模型。')) : !confirm(t('确定润色当前提示词？将调用润色模型改写内容。'))) return;
@@ -171,12 +196,12 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
       }
       const result = await api<{ polishedPrompt: string }>('/prompt-polish', json('POST', {
         prompt: sourcePrompt,
-        mode: video ? 'TEXT_TO_VIDEO' : editing ? 'IMAGE_EDIT' : 'TEXT_TO_IMAGE',
+        mode: video || firstLast ? 'TEXT_TO_VIDEO' : editing ? 'IMAGE_EDIT' : 'TEXT_TO_IMAGE',
         ...(sourceAssetId ? { sourceAssetId } : {}),
       }));
       setPolishPreview({ sourcePrompt, polishedPrompt: result.polishedPrompt });
     } catch (caught) {
-      setError((caught as Error).message);
+      showToast('error', t((caught as Error).message));
     } finally {
       setPolishBusy(false);
     }
@@ -206,10 +231,14 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
     event.preventDefault();
     setError('');
     if ((mode === 'TEXT_TO_IMAGE' || mode === 'TEXT_TO_VIDEO') && hasSource) {
-      setError(t('已选参考图') + '，' + (video ? t('请切换到图生视频') : t('请切换到整图编辑或局部重绘')) + '。');
+      setError(t('已选参考图') + '，' + (video ? videoSourceHint(model, t) : t('请切换到整图编辑或局部重绘')) + '。');
       return;
     }
-    if (mode !== 'TEXT_TO_IMAGE' && mode !== 'TEXT_TO_VIDEO' && !hasSource) {
+    if (firstLast && (!firstFrame || !lastFrame)) {
+      setError(t('首尾帧必须提供首帧和尾帧'));
+      return;
+    }
+    if (mode !== 'TEXT_TO_IMAGE' && mode !== 'TEXT_TO_VIDEO' && !firstLast && !hasSource) {
       setError(t('原图') + '：' + t('请选择或上传一张原图'));
       return;
     }
@@ -223,8 +252,9 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
     }
     setBusy(true);
     try {
-      const uploadedReferences = await Promise.all(references.map(async (reference) => reference.kind === 'file' ? upload(reference.file) : reference.asset));
-      const sourceAssetIds = [...new Set(uploadedReferences.map((asset) => asset.id))];
+      const orderedReferences = firstLast ? [firstFrame, lastFrame].filter((item): item is ReferenceSelection => Boolean(item)) : references;
+      const uploadedReferences = await Promise.all(orderedReferences.map(async (reference) => reference.kind === 'file' ? upload(reference.file) : reference.asset));
+      const sourceAssetIds = firstLast ? uploadedReferences.map((asset) => asset.id) : [...new Set(uploadedReferences.map((asset) => asset.id))];
       const uploadedMask = mode === 'INPAINT' && maskFile ? await upload(maskFile, 'MASK') : undefined;
       const result = await api<GenerationCreated>('/generations', json('POST', {
         conversationId: conversationId || undefined,
@@ -253,6 +283,21 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
     setError('');
   }
 
+  function setFrame(role: FrameRole, value: ReferenceSelection | null) {
+    const current = assignFrameRoles(references);
+    const nextFirst = role === 'first' ? value : current.find((item) => item.frameRole === 'first');
+    const nextLast = role === 'last' ? value : current.find((item) => item.frameRole === 'last');
+    const next: ReferenceSelection[] = [];
+    if (nextFirst) next.push({ ...nextFirst, frameRole: 'first' });
+    if (nextLast) next.push({ ...nextLast, frameRole: 'last' });
+    onReferencesChange(next);
+    setError('');
+  }
+
+  function addFrameFile(role: FrameRole, file: File) {
+    setFrame(role, { key: 'file-' + Date.now() + '-' + role + '-' + file.name, kind: 'file', file, frameRole: role });
+  }
+
   function addFiles(files: File[]) {
     const available = Math.max(0, maxInputImages - references.length);
     if (!available) {
@@ -277,6 +322,7 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
   }, [model, video, quality, duration, size, count]);
 
   return <form className={'composer card stack ' + (conversationId ? 'compact-composer' : '')} onSubmit={submit}>
+    <Toast toast={toast} />
     <h1>{t('想创作什么？')}</h1>
     <div className="media-kind-tabs" role="tablist" aria-label={t('创作类型')}>
       <button className={mediaKind === 'IMAGE' ? 'active' : ''} type="button" role="tab" aria-selected={mediaKind === 'IMAGE'} onClick={() => switchMediaKind('IMAGE')}>{t('图片')}</button>
@@ -287,7 +333,7 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
       <textarea className="field prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={video ? t('输入视频描述或镜头要求') : t('输入图片描述或编辑要求')} required />
       <div className="prompt-input-actions">
         <PromptHistory onPick={(value) => { setPrompt(value); setPolishPreview(null); }} />
-        {(mode === 'TEXT_TO_IMAGE' || mode === 'TEXT_TO_VIDEO' || (mode === 'IMAGE_EDIT' && hasSource)) && <button className="button prompt-polish-button" type="button" disabled={polishBusy || busy} onClick={() => void polishPrompt()}>{polishBusy ? t('正在润色…') : t('提示词润色')}</button>}
+        {(mode === 'TEXT_TO_IMAGE' || mode === 'TEXT_TO_VIDEO' || firstLast || (mode === 'IMAGE_EDIT' && hasSource)) && <button className="button prompt-polish-button" type="button" disabled={polishBusy || busy} onClick={() => void polishPrompt()}>{polishBusy ? t('正在润色…') : t('提示词润色')}</button>}
       </div>
     </div>
     {polishPreview && <section className="prompt-polish-preview" aria-live="polite">
@@ -295,7 +341,12 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
       <div className="prompt-polish-preview-block"><span className="prompt-polish-preview-label">{t('润色结果')}</span><p>{polishPreview.polishedPrompt}</p></div>
       <div className="prompt-polish-preview-actions"><button className="button primary" type="button" onClick={applyPolishedPrompt}>{t('应用润色')}</button><button className="button" type="button" onClick={() => setPolishPreview(null)}>{t('取消润色')}</button></div>
     </section>}
-    {hasSource && <div className="source-selection-list" aria-label={t('参考图列表')}>
+    {firstLast && <div className="frame-slots" aria-label={t('首尾帧')}>
+      <FrameSlot role="first" reference={firstFrame} t={t} onFile={(file) => addFrameFile('first', file)} onClear={() => setFrame('first', null)} />
+      <FrameSlot role="last" reference={lastFrame} t={t} onFile={(file) => addFrameFile('last', file)} onClear={() => setFrame('last', null)} />
+      <p className="muted frame-slots-hint">{t('请分别指定视频的首帧和尾帧')}</p>
+    </div>}
+    {!firstLast && hasSource && <div className="source-selection-list" aria-label={t('参考图列表')}>
       {references.map((reference, index) => <div className="source-selection" key={reference.key}>
         {reference.kind === 'asset' ? <img src={reference.asset.thumbnailUrl ?? reference.asset.contentUrl} alt={t('已选参考图')} /> : <Icon className="source-file-icon" name="image" />}
         <div className="source-selection-copy"><strong>{index + 1}. {reference.kind === 'asset' ? reference.asset.visibility === 'shared' ? t('组内参考图') : t('已选历史参考图') : reference.file.name}</strong><span className="muted">{reference.kind === 'asset' ? reference.asset.visibility === 'shared' ? t('组内素材') : t('已保存图片') : t('本地图片')}</span></div>
@@ -303,7 +354,7 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
       </div>)}
       <p className="muted reference-limit">{t('参考图数量')}：{references.length}/{maxInputImages}</p>
     </div>}
-    {mode !== 'TEXT_TO_IMAGE' && mode !== 'TEXT_TO_VIDEO' && <label className="source-upload">{t('添加参考图')}（{t('可多选')}）
+    {mode !== 'TEXT_TO_IMAGE' && mode !== 'TEXT_TO_VIDEO' && !firstLast && <label className="source-upload">{t('添加参考图')}（{t('可多选')}）
       <input key={sourceInputKey} className="field" type="file" accept="image/png,image/jpeg,image/webp" multiple required={!hasSource} onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ''; }} />
     </label>}
     {mode === 'INPAINT' && maskSource && <MaskCanvas imageSource={maskSource} onMask={setMaskFile} />}
@@ -313,6 +364,7 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
         {video ? <>
           <option value="TEXT_TO_VIDEO">{t('文生视频')}</option>
           {model?.supportsEdit && <option value="IMAGE_TO_VIDEO">{t('图生视频')}</option>}
+          {model?.supportsFirstLastFrame && <option value="FIRST_LAST_FRAME_TO_VIDEO">{t('首尾帧')}</option>}
         </> : <>
           <option value="TEXT_TO_IMAGE">{t('文生图')}</option>
           {model?.supportsEdit && <option value="IMAGE_EDIT">{t('整图编辑')}</option>}
@@ -345,4 +397,33 @@ export default function StudioComposer({ models, optionLabels = {}, conversation
     </div>
     {error && <p className="error composer-error">{error}</p>}
   </form>;
+}
+
+function videoSourceHint(model: StudioModel | undefined, t: (key: string) => string) {
+  if (model?.supportsEdit && model.supportsFirstLastFrame) return t('请切换到图生视频或首尾帧');
+  if (model?.supportsFirstLastFrame) return t('请切换到首尾帧');
+  return t('请切换到图生视频');
+}
+
+function FrameSlot({ role, reference, t, onFile, onClear }: {
+  role: FrameRole;
+  reference?: ReferenceSelection;
+  t: (key: string) => string;
+  onFile: (file: File) => void;
+  onClear: () => void;
+}) {
+  const label = role === 'first' ? t('首帧') : t('尾帧');
+  const filled = Boolean(reference);
+  return <div className={'frame-slot' + (filled ? ' filled' : '')}>
+    <div className="frame-slot-head">
+      <strong>{label}</strong>
+      {filled && <button className="icon-button" type="button" onClick={onClear} aria-label={role === 'first' ? t('移除首帧') : t('移除尾帧')} title={t('移除')}><Icon name="close" /></button>}
+    </div>
+    {reference?.kind === 'asset'
+      ? <img className="frame-slot-preview" src={reference.asset.thumbnailUrl ?? reference.asset.contentUrl} alt={label} />
+      : <div className="frame-slot-empty">{reference?.kind === 'file' ? <><Icon className="source-file-icon" name="image" /><span>{reference.file.name}</span></> : t('尚未选择')}</div>}
+    <label className="source-upload">{filled ? t('更换图片') : (role === 'first' ? t('添加首帧') : t('添加尾帧'))}
+      <input className="field" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) onFile(file); event.currentTarget.value = ''; }} />
+    </label>
+  </div>;
 }

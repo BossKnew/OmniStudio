@@ -13,12 +13,14 @@ import { AuthContextService } from './auth-context.service';
 import { GenerationLifecycleService } from './generation-lifecycle.service';
 import { ACTIVE_JOB_STATUSES } from './domain-constants';
 import { cursorWhere, decodeCursor, encodeCursor, pageLimit } from './pagination';
+import { parseTrashRetention, trashRetentionFromSetting } from './trash-retention';
 
 const registrationSchema = z.object({ enabled: z.boolean() }).strict();
 const statusSchema = z.object({ status: z.enum(['ACTIVE', 'DISABLED']) }).strict();
 const resetSchema = z.object({ password: passwordSchema }).strict();
 const resetMfaSchema = z.object({ actorCode: z.string().regex(/^\d{6}$/) }).strict();
 const sessionDurationSchema = z.object({ duration: z.string().min(2).max(4) }).strict();
+const trashRetentionSchema = z.object({ duration: z.string().min(2).max(4) }).strict();
 const userGroupSchema = z.object({
   name: safeText(64),
   description: safeText(300).optional().nullable(),
@@ -26,6 +28,11 @@ const userGroupSchema = z.object({
   quotaPoints: z.number().int().min(1).max(1_000_000).nullable().optional(),
 }).strict();
 const userGroupsAssignmentSchema = z.object({ groupIds: z.array(uuidSchema).max(100) }).strict();
+const workTeamSchema = z.object({
+  name: safeText(64),
+  description: safeText(300).optional().nullable(),
+}).strict();
+const workTeamsAssignmentSchema = z.object({ teamIds: z.array(uuidSchema).max(100) }).strict();
 
 @Roles('ADMIN')
 @Controller('admin')
@@ -41,7 +48,15 @@ export class AdminController {
   ) {}
 
   @Get('settings')
-  async settings() { return { registrationEnabled: await this.auth.registrationEnabled(), userSessionDuration: await this.auth.userSessionDuration(), adminSessionDuration: '1d' }; }
+  async settings() {
+    const trashRow = await this.prisma.systemSetting.findUnique({ where: { key: 'trash_retention' } });
+    return {
+      registrationEnabled: await this.auth.registrationEnabled(),
+      userSessionDuration: await this.auth.userSessionDuration(),
+      adminSessionDuration: '1d',
+      trashRetention: trashRetentionFromSetting(trashRow?.value).value,
+    };
+  }
 
   @Patch('settings/registration')
   async registration(@CurrentUser() actor: AuthUser, @Body() raw: unknown) {
@@ -63,6 +78,19 @@ export class AdminController {
     return { duration };
   }
 
+  @Patch('settings/trash-retention')
+  async trashRetention(@CurrentUser() actor: AuthUser, @Body() raw: unknown) {
+    const body = parseBody(trashRetentionSchema, raw);
+    let duration: string;
+    try { duration = parseTrashRetention(body.duration).value; }
+    catch (error) { throw new BadRequestException((error as Error).message); }
+    await this.prisma.$transaction([
+      this.prisma.systemSetting.upsert({ where: { key: 'trash_retention' }, create: { key: 'trash_retention', value: duration }, update: { value: duration } }),
+      this.prisma.auditLog.create({ data: { actorId: actor.id, action: 'trash.retention.updated', targetType: 'setting', targetId: 'trash_retention', metadata: { duration } } }),
+    ]);
+    return { duration };
+  }
+
   @Get('users')
   async users(@Query('limit') rawLimit?: string, @Query('cursor') rawCursor?: string) {
     const limit = pageLimit(rawLimit, 50);
@@ -71,13 +99,13 @@ export class AdminController {
       where: cursorWhere('createdAt', cursor),
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
-      select: { id: true, username: true, displayName: true, role: true, status: true, mustChangePwd: true, createdAt: true, updatedAt: true, usage: { select: { storageBytes: true } }, mfaCredential: { select: { userId: true } }, groupMemberships: { select: { group: { select: { id: true, name: true } } }, orderBy: { group: { name: 'asc' } } }, _count: { select: { jobs: true, conversations: true, assets: { where: { role: { in: ['UPLOAD', 'OUTPUT'] }, deletedAt: null } } } } },
+      select: { id: true, username: true, displayName: true, role: true, status: true, mustChangePwd: true, createdAt: true, updatedAt: true, usage: { select: { storageBytes: true } }, mfaCredential: { select: { userId: true } }, groupMemberships: { select: { group: { select: { id: true, name: true } } }, orderBy: { group: { name: 'asc' } } }, teamMemberships: { select: { team: { select: { id: true, name: true } } }, orderBy: { team: { name: 'asc' } } }, _count: { select: { jobs: true, conversations: true, assets: { where: { role: { in: ['UPLOAD', 'OUTPUT'] }, deletedAt: null } } } } },
     });
     const hasMore = users.length > limit;
     const page = users.slice(0, limit);
     const items = page.map((user) => {
-      const { mfaCredential, groupMemberships, usage, ...publicUser } = user;
-      return { ...publicUser, groups: groupMemberships?.map(({ group }) => group) ?? [], mfaEnabled: Boolean(mfaCredential), mfaRequired: user.role === 'ADMIN', storageBytes: usage?.storageBytes.toString() ?? '0' };
+      const { mfaCredential, groupMemberships, teamMemberships, usage, ...publicUser } = user;
+      return { ...publicUser, groups: groupMemberships?.map(({ group }) => group) ?? [], teams: teamMemberships?.map(({ team }) => team) ?? [], mfaEnabled: Boolean(mfaCredential), mfaRequired: user.role === 'ADMIN', storageBytes: usage?.storageBytes.toString() ?? '0' };
     });
     const last = page.at(-1);
     return { items, nextCursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null };
@@ -87,7 +115,7 @@ export class AdminController {
   userGroups() {
     return this.prisma.userGroup.findMany({
       orderBy: { name: 'asc' },
-      include: { _count: { select: { users: true, models: true, assetShares: true } } },
+      include: { _count: { select: { users: true, models: true } } },
     });
   }
 
@@ -146,6 +174,61 @@ export class AdminController {
     return { groupIds };
   }
 
+  @Get('work-teams')
+  workTeams() {
+    return this.prisma.workTeam.findMany({
+      orderBy: { name: 'asc' },
+      include: { _count: { select: { users: true, assetShares: true } } },
+    });
+  }
+
+  @Post('work-teams')
+  async createWorkTeam(@CurrentUser() actor: AuthUser, @Body() raw: unknown) {
+    const body = parseBody(workTeamSchema, raw);
+    const name = body.name.trim();
+    if (await this.prisma.workTeam.findUnique({ where: { name }, select: { id: true } })) throw new ConflictException('工作团队名称已存在');
+    const team = await this.prisma.workTeam.create({ data: { name, description: body.description?.trim() || null } });
+    await this.prisma.auditLog.create({ data: { actorId: actor.id, action: 'work-team.created', targetType: 'work-team', targetId: team.id, metadata: { name } } });
+    return team;
+  }
+
+  @Patch('work-teams/:id')
+  async updateWorkTeam(@CurrentUser() actor: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() raw: unknown) {
+    const body = parseBody(workTeamSchema.partial().strict(), raw);
+    const name = body.name?.trim();
+    if (name && await this.prisma.workTeam.findFirst({ where: { name, id: { not: id } }, select: { id: true } })) throw new ConflictException('工作团队名称已存在');
+    const team = await this.prisma.workTeam.update({ where: { id }, data: { ...(name ? { name } : {}), ...(body.description !== undefined ? { description: body.description?.trim() || null } : {}) } });
+    await this.prisma.auditLog.create({ data: { actorId: actor.id, action: 'work-team.updated', targetType: 'work-team', targetId: id } });
+    return team;
+  }
+
+  @Delete('work-teams/:id')
+  async deleteWorkTeam(@CurrentUser() actor: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    const team = await this.prisma.workTeam.findUniqueOrThrow({ where: { id }, include: { _count: { select: { users: true } } } });
+    if (team._count.users) throw new ConflictException('请先移除该团队中的用户，再删除工作团队');
+    await this.prisma.$transaction([
+      this.prisma.workTeam.delete({ where: { id } }),
+      this.prisma.auditLog.create({ data: { actorId: actor.id, action: 'work-team.deleted', targetType: 'work-team', targetId: id, metadata: { name: team.name } } }),
+    ]);
+    return { ok: true };
+  }
+
+  @Patch('users/:id/teams')
+  async userTeamsAssignment(@CurrentUser() actor: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() raw: unknown) {
+    const body = parseBody(workTeamsAssignmentSchema, raw);
+    const teamIds = [...new Set(body.teamIds)];
+    if (teamIds.length !== body.teamIds.length) throw new BadRequestException('工作团队不能重复');
+    if (teamIds.length && await this.prisma.workTeam.count({ where: { id: { in: teamIds } } }) !== teamIds.length) throw new BadRequestException('包含不存在的工作团队');
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.findUniqueOrThrow({ where: { id }, select: { id: true } });
+      await tx.workTeamMembership.deleteMany({ where: { userId: id } });
+      if (teamIds.length) await tx.workTeamMembership.createMany({ data: teamIds.map((teamId) => ({ userId: id, teamId })) });
+      await tx.auditLog.create({ data: { actorId: actor.id, action: 'user.teams.updated', targetType: 'user', targetId: id, metadata: { teamIds } } });
+    });
+    await this.authContext.invalidate(id);
+    return { teamIds };
+  }
+
   @Patch('users/:id/status')
   async userStatus(@CurrentUser() actor: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() raw: unknown) {
     const body = parseBody(statusSchema, raw);
@@ -196,7 +279,7 @@ export class AdminController {
 
   @Get('storage')
   async storageStats() {
-    const result = await this.prisma.asset.aggregate({ where: { role: { in: ['UPLOAD', 'OUTPUT'] }, deletedAt: null }, _sum: { sizeBytes: true }, _count: true });
+    const result = await this.prisma.asset.aggregate({ where: { role: { in: ['UPLOAD', 'OUTPUT'] }, purgedAt: null }, _sum: { sizeBytes: true }, _count: true });
     return { assetCount: result._count, storageBytes: result._sum.sizeBytes?.toString() ?? '0' };
   }
 

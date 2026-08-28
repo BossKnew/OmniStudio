@@ -20,13 +20,13 @@ describe('AuthContextService', () => {
     }};
     const prisma: any = { user: { findUnique: jest.fn().mockResolvedValue({
       id: 'user-1', username: 'alice', displayName: null, role: 'USER', status: 'ACTIVE', mustChangePwd: false,
-      mfaCredential: null, groupMemberships: [{ groupId: 'group-1' }],
+      mfaCredential: null, groupMemberships: [{ groupId: 'group-1' }], teamMemberships: [{ teamId: 'team-1' }],
     }) } };
     const service = new AuthContextService(prisma, redis);
 
     const [first, second] = await Promise.all([service.get('user-1'), service.get('user-1')]);
     expect(first).toEqual(second);
-    expect(first).toMatchObject({ displayName: 'alice', groupIds: ['group-1'], mfaEnabled: false });
+    expect(first).toMatchObject({ displayName: 'alice', groupIds: ['group-1'], teamIds: ['team-1'], mfaEnabled: false });
     expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
 
     await service.invalidate('user-1');

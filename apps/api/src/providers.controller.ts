@@ -7,16 +7,20 @@ import { parseBody, safeText } from './validation';
 import { z } from 'zod';
 import { normalizeProviderHeaders } from './provider-headers';
 import { providerRequestHeaders } from './provider-credentials';
-import { ACTIVE_JOB_STATUSES, PROVIDER_ADAPTER_KINDS, isVideoAdapterKind } from './domain-constants';
+import { ACTIVE_JOB_STATUSES, IMAGE_ADAPTER_KIND, isVideoAdapterKind } from './domain-constants';
 import { createVideoAdapter, testModelsList } from './video-adapters';
 import { normalizeAdapterKind } from './provider-adapter';
 import { testQwenImageConnection } from './qwen-image';
+import { testBananaConnection } from './nano-banana';
+import { testSeedreamConnection } from './seedream';
+import { testFluxConnection } from './flux';
+import { testMidjourneyConnection } from './midjourney';
+import { testRunwayImageConnection } from './runway-image';
 
 const headersSchema = z.record(z.string().max(128), z.string().max(4096));
-const adapterKindSchema = z.enum(PROVIDER_ADAPTER_KINDS);
 const providerCreateSchema = z.object({
   name: safeText(64), baseUrl: z.string().max(2048), apiKey: z.string().min(1).max(16_384), headers: headersSchema.optional(),
-  adapterKind: adapterKindSchema.optional(), timeoutSeconds: z.number().int().min(10).max(3600).optional(),
+  timeoutSeconds: z.number().int().min(10).max(3600).optional(),
   pollTimeoutSeconds: z.number().int().min(10).max(3600).optional(), enabled: z.boolean().optional(),
 }).strict();
 const providerUpdateSchema = providerCreateSchema.partial().strict();
@@ -56,7 +60,7 @@ export class ProvidersController {
   async create(@CurrentUser() actor: AuthUser, @Body() raw: unknown) {
     const body = parseBody(providerCreateSchema, raw);
     const provider = await this.prisma.provider.create({ data: {
-      name: body.name.trim(), baseUrl: this.http.validateBaseUrl(body.baseUrl), adapterKind: normalizeAdapterKind(body.adapterKind), encryptedApiKey: this.crypto.encrypt(body.apiKey),
+      name: body.name.trim(), baseUrl: this.http.validateBaseUrl(body.baseUrl), encryptedApiKey: this.crypto.encrypt(body.apiKey),
       encryptedHeaders: body.headers ? this.crypto.encrypt(JSON.stringify(normalizeProviderHeaders(body.headers))) : null,
       timeoutSeconds: Math.min(3600, Math.max(10, Number(body.timeoutSeconds) || 180)),
       pollTimeoutSeconds: Math.min(3600, Math.max(10, Number(body.pollTimeoutSeconds) || 900)),
@@ -74,7 +78,6 @@ export class ProvidersController {
       ...(body.baseUrl !== undefined ? { baseUrl: this.http.validateBaseUrl(body.baseUrl) } : {}),
       ...(body.apiKey ? { encryptedApiKey: this.crypto.encrypt(body.apiKey) } : {}),
       ...(body.headers !== undefined ? { encryptedHeaders: body.headers ? this.crypto.encrypt(JSON.stringify(normalizeProviderHeaders(body.headers))) : null } : {}),
-      ...(body.adapterKind !== undefined ? { adapterKind: normalizeAdapterKind(body.adapterKind) } : {}),
       ...(body.timeoutSeconds !== undefined ? { timeoutSeconds: body.timeoutSeconds } : {}),
       ...(body.pollTimeoutSeconds !== undefined ? { pollTimeoutSeconds: body.pollTimeoutSeconds } : {}),
       ...(body.enabled !== undefined ? { enabled: Boolean(body.enabled) } : {}),
@@ -98,26 +101,27 @@ export class ProvidersController {
     }
     const provider = await this.prisma.provider.findUniqueOrThrow({ where: { id } });
     const headers = providerRequestHeaders(this.crypto, provider);
+    const models = await this.prisma.model.findMany({ where: { providerId: id }, select: { adapterKind: true } });
+    const adapterKinds = [...new Set(models.map((model) => normalizeAdapterKind(model.adapterKind)))];
+    const toProbe = adapterKinds.length ? adapterKinds : [IMAGE_ADAPTER_KIND];
     try {
-      const adapterKind = normalizeAdapterKind(provider.adapterKind);
-      const probed = isVideoAdapterKind(adapterKind) && adapterKind !== 'openai-videos'
-        ? await createVideoAdapter(adapterKind, {
-          http: this.http,
-          headers,
-          baseUrl: provider.baseUrl,
-          timeoutSeconds: provider.timeoutSeconds,
-          pollTimeoutSeconds: provider.pollTimeoutSeconds,
-        }).testConnection()
-        : adapterKind === 'qwen-image'
-          ? await testQwenImageConnection({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds })
-          : await testModelsList({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds });
-      const ok = Boolean(probed.ok);
-      const error = ok ? undefined : probed.message ?? (probed.status ? providerTestError(probed.status) : '供应商连接失败');
-      const result = { ok, status: probed.status, ...(ok ? {} : { error }), cooldownUntil };
-      if (!ok) this.logger.warn(`供应商 ${id} 测试失败：HTTP ${probed.status ?? 'n/a'} adapter=${adapterKind}`);
-      await this.prisma.provider.update({ where: { id }, data: { lastTestOk: ok } });
+      let probed: { ok: boolean; status?: number; message?: string } = { ok: false };
+      for (const adapterKind of toProbe) {
+        probed = await this.probeAdapter(adapterKind, provider, headers);
+        if (!probed.ok) {
+          const error = probed.message ?? (probed.status ? providerTestError(probed.status) : '供应商连接失败');
+          this.logger.warn(`供应商 ${id} 测试失败：HTTP ${probed.status ?? 'n/a'} adapter=${adapterKind}`);
+          await this.prisma.provider.update({ where: { id }, data: { lastTestOk: false } });
+          if (actor) await this.audit(actor.id, 'provider.tested', id);
+          return { ok: false, status: probed.status, error, cooldownUntil };
+        }
+      }
+      await this.prisma.provider.update({ where: { id }, data: { lastTestOk: true } });
       if (actor) await this.audit(actor.id, 'provider.tested', id);
-      return result;
+      return {
+        ok: true, status: probed.status, cooldownUntil,
+        ...(adapterKinds.length ? {} : { note: '添加模型后会按适配器类型做更准确的测试' }),
+      };
     } catch (error) {
       const result = { ok: false, error: '供应商连接失败', cooldownUntil };
       this.logger.warn(`供应商 ${id} 连接测试失败：${safeErrorMessage(error)}`);
@@ -125,6 +129,38 @@ export class ProvidersController {
       if (actor) await this.audit(actor.id, 'provider.tested', id);
       return result;
     }
+  }
+
+  private probeAdapter(adapterKind: string, provider: { baseUrl: string; timeoutSeconds: number; pollTimeoutSeconds: number }, headers: Record<string, string>) {
+    const kind = normalizeAdapterKind(adapterKind);
+    if (isVideoAdapterKind(kind) && kind !== 'openai-videos') {
+      return createVideoAdapter(kind, {
+        http: this.http,
+        headers,
+        baseUrl: provider.baseUrl,
+        timeoutSeconds: provider.timeoutSeconds,
+        pollTimeoutSeconds: provider.pollTimeoutSeconds,
+      }).testConnection();
+    }
+    if (kind === 'qwen-image') {
+      return testQwenImageConnection({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds });
+    }
+    if (kind === 'nano-banana') {
+      return testBananaConnection({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds });
+    }
+    if (kind === 'seedream') {
+      return testSeedreamConnection({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds });
+    }
+    if (kind === 'flux') {
+      return testFluxConnection({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds });
+    }
+    if (kind === 'midjourney') {
+      return testMidjourneyConnection({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds });
+    }
+    if (kind === 'runway-images') {
+      return testRunwayImageConnection({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds });
+    }
+    return testModelsList({ http: this.http, headers, baseUrl: provider.baseUrl, timeoutSeconds: provider.timeoutSeconds });
   }
 
   @Delete(':id')

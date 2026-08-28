@@ -14,12 +14,13 @@ import { diskStorage } from 'multer';
 import { MAX_IMAGE_BYTES } from './domain-constants';
 import { AssetLifecycleService } from './asset-lifecycle.service';
 import { cursorWhere, decodeCursor, encodeCursor, pageLimit } from './pagination';
+import { assetFilterWhere, parseAssetListQuery } from './asset-list-query';
 import { serializeAssetLinks } from './asset-response';
 import { canReadAsset, canShareAsset, canUnshareAsset } from './asset-access';
 
 const noteSchema = z.object({ note: z.string().max(1000).nullable() }).strict();
-const shareSchema = z.object({ groupIds: z.array(uuidSchema).max(100) }).strict();
-const shareSelect = { id: true, groupId: true, createdAt: true, group: { select: { id: true, name: true } } } as const;
+const shareSchema = z.object({ teamIds: z.array(uuidSchema).max(100) }).strict();
+const shareSelect = { id: true, teamId: true, createdAt: true, team: { select: { id: true, name: true } } } as const;
 
 @Controller()
 export class AssetsController {
@@ -56,47 +57,72 @@ export class AssetsController {
   }
 
   @Get('assets')
-  async list(@CurrentUser() user: AuthUser, @Query('limit') rawLimit?: string, @Query('cursor') rawCursor?: string, @Query('mediaKind') rawKind?: string) {
-    const limit = pageLimit(rawLimit, 40);
-    const cursor = decodeCursor(rawCursor);
-    const mediaKind = rawKind === 'IMAGE' || rawKind === 'VIDEO' ? rawKind as 'IMAGE' | 'VIDEO' : undefined;
-    const where = { userId: user.id, role: { in: ['UPLOAD' as const, 'OUTPUT' as const] }, deletedAt: null, ...(mediaKind ? { mediaKind } : {}), ...cursorWhere('createdAt', cursor) };
+  async list(@CurrentUser() user: AuthUser, @Query() query: Record<string, unknown> = {}) {
+    const limit = pageLimit(query.limit, 40);
+    const cursor = decodeCursor(query.cursor);
+    const filterWhere = assetFilterWhere(parseAssetListQuery(query, { allowQ: true }));
+    const where = { userId: user.id, AND: [filterWhere, cursorWhere('createdAt', cursor)] };
     const [rows, total] = await Promise.all([this.prisma.asset.findMany({
       where,
-      include: { job: { select: { prompt: true } }, thumbnail: { select: { id: true, deletedAt: true } }, shares: { select: { groupId: true } } },
+      include: { job: { select: { prompt: true } }, thumbnail: { select: { id: true, deletedAt: true } }, shares: { select: { teamId: true } } },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit + 1,
-    }), this.prisma.asset.count({ where: { userId: user.id, role: { in: ['UPLOAD', 'OUTPUT'] }, deletedAt: null, ...(mediaKind ? { mediaKind } : {}) } })]);
+    }), this.prisma.asset.count({ where: { userId: user.id, ...filterWhere } })]);
     const hasMore = rows.length > limit;
     const assets = rows.slice(0, limit);
     const last = assets.at(-1);
     return { items: assets.map((asset) => this.serializeOwned(asset)), nextCursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null, total };
   }
 
+  @Get('assets/trash')
+  async trash(@CurrentUser() user: AuthUser, @Query() query: Record<string, unknown> = {}) {
+    const limit = pageLimit(query.limit, 40);
+    const cursor = decodeCursor(query.cursor);
+    const filterWhere = assetFilterWhere(parseAssetListQuery(query, { allowQ: true }), { trash: true });
+    const where = { userId: user.id, AND: [filterWhere, cursorWhere('deletedAt', cursor)] };
+    const [rows, total] = await Promise.all([this.prisma.asset.findMany({
+      where,
+      include: { job: { select: { prompt: true } }, thumbnail: { select: { id: true, deletedAt: true, purgedAt: true } }, shares: { select: { teamId: true } } },
+      orderBy: [{ deletedAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+    }), this.prisma.asset.count({ where: { userId: user.id, ...filterWhere } })]);
+    const hasMore = rows.length > limit;
+    const assets = rows.slice(0, limit);
+    const last = assets.at(-1);
+    return { items: assets.map((asset) => this.serializeOwned(asset, { allowTrash: true })), nextCursor: hasMore && last && last.deletedAt ? encodeCursor(last.deletedAt, last.id) : null, total };
+  }
+
+  @Post('assets/trash/empty')
+  async emptyTrash(@CurrentUser() user: AuthUser) {
+    const purged = await this.lifecycle.emptyTrash(user.id);
+    return { ok: true, purged };
+  }
+
   @Get('assets/shared')
-  async shared(@CurrentUser() user: AuthUser, @Query('limit') rawLimit?: string, @Query('cursor') rawCursor?: string, @Query('groupId') rawGroupId?: string) {
-    const limit = pageLimit(rawLimit, 40);
-    const cursor = decodeCursor(rawCursor);
-    const groupId = rawGroupId ? parseGroupId(rawGroupId) : undefined;
-    const visibleGroupIds = await this.visibleGroupIds(user, groupId);
-    if (!visibleGroupIds.length) return { items: [], nextCursor: null, total: 0 };
-    const where = {
-      groupId: { in: visibleGroupIds },
-      asset: { deletedAt: null, role: { in: ['UPLOAD' as const, 'OUTPUT' as const] } },
-      ...cursorWhere('createdAt', cursor),
+  async shared(@CurrentUser() user: AuthUser, @Query() query: Record<string, unknown> = {}) {
+    const limit = pageLimit(query.limit, 40);
+    const cursor = decodeCursor(query.cursor);
+    const filters = parseAssetListQuery(query, { allowQ: false });
+    const teamId = parseOptionalTeamId(query.teamId);
+    const visibleTeamIds = await this.visibleTeamIds(user, teamId);
+    if (!visibleTeamIds.length) return { items: [], nextCursor: null, total: 0 };
+    const filterWhere = {
+      teamId: { in: visibleTeamIds },
+      asset: assetFilterWhere(filters),
     };
+    const where = { ...filterWhere, ...cursorWhere('createdAt', cursor) };
     const [rows, total] = await Promise.all([
       this.prisma.assetShare.findMany({
         where,
         include: {
-          group: { select: { id: true, name: true } },
+          team: { select: { id: true, name: true } },
           sharedBy: { select: { displayName: true, username: true } },
           asset: { include: { thumbnail: { select: { id: true, deletedAt: true } } } },
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit + 1,
       }),
-      this.prisma.assetShare.count({ where }),
+      this.prisma.assetShare.count({ where: filterWhere }),
     ]);
     const hasMore = rows.length > limit;
     const page = rows.slice(0, limit);
@@ -113,48 +139,48 @@ export class AssetsController {
       orderBy: { createdAt: 'asc' },
       select: shareSelect,
     });
-    return { items: items.map((item) => ({ id: item.id, groupId: item.groupId, createdAt: item.createdAt, group: item.group })) };
+    return { items: items.map((item) => ({ id: item.id, teamId: item.teamId, createdAt: item.createdAt, team: item.team })) };
   }
 
   @Put('assets/:id/shares')
   async replaceShares(@CurrentUser() user: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Body() raw: unknown) {
     const body = parseBody(shareSchema, raw);
-    const groupIds = [...new Set(body.groupIds)];
-    if (groupIds.length !== body.groupIds.length) throw new BadRequestException('用户组不能重复');
+    const teamIds = [...new Set(body.teamIds)];
+    if (teamIds.length !== body.teamIds.length) throw new BadRequestException('工作团队不能重复');
     const asset = await this.prisma.asset.findFirst({ where: { id, deletedAt: null }, select: { id: true, userId: true, role: true, deletedAt: true } });
     if (!canShareAsset(user, asset)) throw new NotFoundException();
-    const allowedGroupIds = user.role === 'ADMIN' ? groupIds : groupIds.filter((groupId) => (user.groupIds ?? []).includes(groupId));
-    if (allowedGroupIds.length !== groupIds.length) throw new BadRequestException('只能分享到你所属的用户组');
-    if (groupIds.length && await this.prisma.userGroup.count({ where: { id: { in: groupIds } } }) !== groupIds.length) throw new BadRequestException('包含不存在的用户组');
+    const allowedTeamIds = user.role === 'ADMIN' ? teamIds : teamIds.filter((teamId) => (user.teamIds ?? []).includes(teamId));
+    if (allowedTeamIds.length !== teamIds.length) throw new BadRequestException('只能分享到你所属的工作团队');
+    if (teamIds.length && await this.prisma.workTeam.count({ where: { id: { in: teamIds } } }) !== teamIds.length) throw new BadRequestException('包含不存在的工作团队');
 
-    const current = await this.prisma.assetShare.findMany({ where: { assetId: id }, select: { groupId: true } });
-    const currentIds = new Set(current.map(({ groupId }) => groupId));
-    const nextIds = new Set(groupIds);
-    const added = groupIds.filter((groupId) => !currentIds.has(groupId));
-    const removed = current.map(({ groupId }) => groupId).filter((groupId) => !nextIds.has(groupId));
+    const current = await this.prisma.assetShare.findMany({ where: { assetId: id }, select: { teamId: true } });
+    const currentIds = new Set(current.map(({ teamId }) => teamId));
+    const nextIds = new Set(teamIds);
+    const added = teamIds.filter((teamId) => !currentIds.has(teamId));
+    const removed = current.map(({ teamId }) => teamId).filter((teamId) => !nextIds.has(teamId));
 
     await this.prisma.$transaction(async (tx) => {
-      if (removed.length) await tx.assetShare.deleteMany({ where: { assetId: id, groupId: { in: removed } } });
-      if (added.length) await tx.assetShare.createMany({ data: added.map((groupId) => ({ assetId: id, groupId, sharedById: user.id })) });
-      if (added.length) await tx.auditLog.create({ data: { actorId: user.id, action: 'asset.shared', targetType: 'asset', targetId: id, metadata: { groupIds: added } } });
-      if (removed.length) await tx.auditLog.create({ data: { actorId: user.id, action: 'asset.unshared', targetType: 'asset', targetId: id, metadata: { groupIds: removed } } });
+      if (removed.length) await tx.assetShare.deleteMany({ where: { assetId: id, teamId: { in: removed } } });
+      if (added.length) await tx.assetShare.createMany({ data: added.map((teamId) => ({ assetId: id, teamId, sharedById: user.id })) });
+      if (added.length) await tx.auditLog.create({ data: { actorId: user.id, action: 'asset.shared', targetType: 'asset', targetId: id, metadata: { teamIds: added } } });
+      if (removed.length) await tx.auditLog.create({ data: { actorId: user.id, action: 'asset.unshared', targetType: 'asset', targetId: id, metadata: { teamIds: removed } } });
     });
 
     const items = await this.prisma.assetShare.findMany({ where: { assetId: id }, orderBy: { createdAt: 'asc' }, select: shareSelect });
-    return { items: items.map((item) => ({ id: item.id, groupId: item.groupId, createdAt: item.createdAt, group: item.group })) };
+    return { items: items.map((item) => ({ id: item.id, teamId: item.teamId, createdAt: item.createdAt, team: item.team })) };
   }
 
-  @Delete('assets/:id/shares/:groupId')
+  @Delete('assets/:id/shares/:teamId')
   async unshare(
     @CurrentUser() user: AuthUser,
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
-    @Param('groupId', new ParseUUIDPipe({ version: '4' })) groupId: string,
+    @Param('teamId', new ParseUUIDPipe({ version: '4' })) teamId: string,
   ) {
     const asset = await this.prisma.asset.findFirst({ where: { id, deletedAt: null }, select: { id: true, userId: true, deletedAt: true } });
     if (!canUnshareAsset(user, asset)) throw new NotFoundException();
-    const result = await this.prisma.assetShare.deleteMany({ where: { assetId: id, groupId } });
+    const result = await this.prisma.assetShare.deleteMany({ where: { assetId: id, teamId } });
     if (!result.count) throw new NotFoundException();
-    await this.prisma.auditLog.create({ data: { actorId: user.id, action: 'asset.unshared', targetType: 'asset', targetId: id, metadata: { groupIds: [groupId] } } });
+    await this.prisma.auditLog.create({ data: { actorId: user.id, action: 'asset.unshared', targetType: 'asset', targetId: id, metadata: { teamIds: [teamId] } } });
     return { ok: true };
   }
 
@@ -172,11 +198,11 @@ export class AssetsController {
   @Get('assets/:id/content')
   async content(@CurrentUser() user: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string, @Res() response: Response, @Req() request?: Request) {
     const asset = await this.prisma.asset.findFirst({
-      where: { id, deletedAt: null },
+      where: { id, purgedAt: null },
       select: {
-        objectKey: true, mimeType: true, sizeBytes: true, userId: true, role: true, deletedAt: true,
-        shares: { select: { groupId: true } },
-        thumbnailFor: { select: { userId: true, role: true, deletedAt: true, shares: { select: { groupId: true } } } },
+        objectKey: true, mimeType: true, sizeBytes: true, userId: true, role: true, deletedAt: true, purgedAt: true,
+        shares: { select: { teamId: true } },
+        thumbnailFor: { select: { userId: true, role: true, deletedAt: true, purgedAt: true, shares: { select: { teamId: true } } } },
       },
     });
     if (!canReadAsset(user, asset)) throw new NotFoundException();
@@ -207,43 +233,58 @@ export class AssetsController {
     stream.pipe(response);
   }
 
+  @Post('assets/:id/restore')
+  async restore(@CurrentUser() user: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    if (!await this.lifecycle.restore(user.id, id)) throw new NotFoundException();
+    return { ok: true };
+  }
+
+  @Post('assets/:id/purge')
+  async purge(@CurrentUser() user: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
+    if (!await this.lifecycle.purge(user.id, id)) throw new NotFoundException();
+    return { ok: true };
+  }
+
   @Delete('assets/:id')
   async remove(@CurrentUser() user: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     if (!await this.lifecycle.remove(user.id, id)) throw new NotFoundException();
     return { ok: true };
   }
 
-  private async visibleGroupIds(user: AuthUser, groupId?: string) {
+  private async visibleTeamIds(user: AuthUser, teamId?: string) {
     if (user.role === 'ADMIN') {
-      if (!groupId) return [];
-      return [groupId];
+      if (!teamId) return [];
+      return [teamId];
     }
-    const memberships = user.groupIds ?? [];
-    if (groupId) {
-      if (!memberships.includes(groupId)) throw new BadRequestException('无权访问该用户组');
-      return [groupId];
+    const memberships = user.teamIds ?? [];
+    if (teamId) {
+      if (!memberships.includes(teamId)) throw new BadRequestException('无权访问该工作团队');
+      return [teamId];
     }
     return memberships;
   }
 
-  private serializeOwned<T extends { id: string; objectKey: string; sizeBytes: bigint; deletedAt: Date | null; note: string | null; contentHash?: string | null; job?: { prompt: string } | null; thumbnail?: { id: string; deletedAt: Date | null } | null; shares?: Array<{ groupId: string }> }>(asset: T): Record<string, unknown> {
+  private serializeOwned<T extends { id: string; objectKey: string; sizeBytes: bigint; deletedAt: Date | null; purgeAfter?: Date | null; purgedAt?: Date | null; note: string | null; contentHash?: string | null; job?: { prompt: string } | null; thumbnail?: { id: string; deletedAt: Date | null; purgedAt?: Date | null } | null; shares?: Array<{ teamId: string }> }>(asset: T, options?: { allowTrash?: boolean }): Record<string, unknown> {
     const { job, thumbnail, contentHash: _contentHash, shares, ...storedAsset } = asset;
     return {
       ...storedAsset,
       note: storedAsset.note ?? null,
       generationPrompt: job?.prompt ?? null,
       visibility: 'owned',
-      sharedGroupIds: shares?.map(({ groupId }) => groupId) ?? [],
+      sharedTeamIds: shares?.map(({ teamId }) => teamId) ?? [],
       sizeBytes: asset.sizeBytes.toString(),
-      ...serializeAssetLinks({ id: asset.id, deletedAt: storedAsset.deletedAt, thumbnail }),
+      deletedAt: storedAsset.deletedAt,
+      purgeAfter: storedAsset.purgeAfter ?? null,
+      ...serializeAssetLinks({ id: asset.id, deletedAt: storedAsset.deletedAt, purgedAt: storedAsset.purgedAt, thumbnail }, options),
       objectKey: undefined,
+      purgedAt: undefined,
     };
   }
 
   private serializeShared(row: {
     id: string;
     createdAt: Date;
-    group: { id: string; name: string };
+    team: { id: string; name: string };
     sharedBy: { displayName: string | null; username: string };
     asset: { id: string; userId: string; role: string; mimeType: string; mediaKind?: string; durationMs?: number | null; sizeBytes: bigint; width: number | null; height: number | null; deletedAt: Date | null; objectKey: string; note: string | null; thumbnail?: { id: string; deletedAt: Date | null } | null };
   }, user: AuthUser): Record<string, unknown> {
@@ -259,7 +300,7 @@ export class AssetsController {
       sizeBytes: row.asset.sizeBytes.toString(),
       visibility: 'shared',
       sharedAt: row.createdAt,
-      group: row.group,
+      team: row.team,
       sharedBy: { displayName: row.sharedBy.displayName || row.sharedBy.username },
       canUnshare: row.asset.userId === user.id || user.role === 'ADMIN',
       note: null,
@@ -293,8 +334,14 @@ export function parseByteRange(header: unknown, size: number) {
   return { start, end };
 }
 
-function parseGroupId(raw: string) {
+function parseOptionalTeamId(raw: unknown) {
+  if (raw === undefined || raw === '') return undefined;
+  if (typeof raw !== 'string') throw new BadRequestException('工作团队无效');
+  return parseTeamId(raw);
+}
+
+function parseTeamId(raw: string) {
   const parsed = uuidSchema.safeParse(raw);
-  if (!parsed.success) throw new BadRequestException('用户组无效');
+  if (!parsed.success) throw new BadRequestException('工作团队无效');
   return parsed.data;
 }

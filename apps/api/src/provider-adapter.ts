@@ -1,6 +1,6 @@
 /**
  * Stable boundary for remote media providers. Image generation still uses the
- * dedicated Images worker. Video providers are selected by Provider.adapterKind.
+ * dedicated Images worker. Video models are selected by Model.adapterKind.
  */
 import { IMAGE_ADAPTER_KIND, isVideoAdapterKind, type VideoAdapterKind } from './domain-constants';
 import type { SafeHttpService } from './safe-http.service';
@@ -43,7 +43,7 @@ export interface MediaGenerationAdapter {
   testConnection(): Promise<{ ok: boolean; status?: number; message?: string }>;
 }
 
-export const RESERVED_VIDEO_ADAPTERS = ['openai-videos', 'seedance', 'wan'] as const;
+export const RESERVED_VIDEO_ADAPTERS = ['openai-videos', 'seedance', 'wan', 'veo', 'minimax', 'runway', 'flux-video'] as const;
 
 export function normalizeAdapterKind(value: unknown): string {
   const kind = typeof value === 'string' ? value.trim() : '';
@@ -62,7 +62,7 @@ export function videoHttpFailure(status: number, providerCode?: string) {
   }
   if (status === 401 || status === 403) return { code: 'PROVIDER_AUTH', message: '供应商认证失败，请管理员检查 API Key 和请求头' };
   if (status === 404) return { code: 'PROVIDER_NOT_FOUND', message: '供应商接口或模型不存在，请管理员检查 Base URL 和模型 ID' };
-  if (status === 429) return { code: 'PROVIDER_LIMIT', message: '供应商限流或账户额度不足，请稍后重试' };
+  if (status === 402 || status === 429) return { code: 'PROVIDER_LIMIT', message: '供应商限流或账户额度不足，请稍后重试' };
   return { code: 'PROVIDER_UNAVAILABLE', message: '供应商服务暂时不可用，请稍后重试' };
 }
 

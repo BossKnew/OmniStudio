@@ -92,14 +92,14 @@ export class ConversationsController {
   async remove(@CurrentUser() user: AuthUser, @Param('id', new ParseUUIDPipe({ version: '4' })) id: string) {
     const conversation = await this.prisma.conversation.findFirst({
       where: { id, userId: user.id },
-      select: { jobs: { select: { status: true, parameters: true, assets: { select: { id: true, objectKey: true, sizeBytes: true, deletedAt: true, role: true } } } } },
+      select: { jobs: { select: { status: true, parameters: true, assets: { select: { id: true, objectKey: true, sizeBytes: true, deletedAt: true, purgedAt: true, role: true } } } } },
     });
     if (!conversation) throw new NotFoundException();
     if (conversation.jobs.some((job) => ACTIVE_JOB_STATUSES.includes(job.status as typeof ACTIVE_JOB_STATUSES[number]))) throw new ConflictException('会话仍有活动任务，暂时不能删除');
     const referencedSourceIds = [...new Set(conversation.jobs.flatMap((job) => sourceAssetIds(job.parameters)))];
     const uploadedSources = referencedSourceIds.length ? await this.prisma.asset.findMany({
       where: { id: { in: referencedSourceIds }, userId: user.id, role: 'UPLOAD' },
-      select: { id: true, objectKey: true, sizeBytes: true, deletedAt: true, role: true, shares: { select: { id: true }, take: 1 }, thumbnail: { select: { id: true, objectKey: true, sizeBytes: true, deletedAt: true, role: true } } },
+      select: { id: true, objectKey: true, sizeBytes: true, deletedAt: true, purgedAt: true, role: true, shares: { select: { id: true }, take: 1 }, thumbnail: { select: { id: true, objectKey: true, sizeBytes: true, deletedAt: true, purgedAt: true, role: true } } },
     }) : [];
     const sharedJobs = uploadedSources.length ? await this.prisma.generationJob.findMany({
       where: {
@@ -116,9 +116,9 @@ export class ConversationsController {
       ...exclusiveUploads.flatMap(({ thumbnail, ...asset }) => [asset, ...(thumbnail ? [thumbnail] : [])]),
     ];
     const assetIds = assets.map((asset) => asset.id);
-    const deletedAssetIds = assets.filter((asset) => !asset.deletedAt && (asset.role === 'UPLOAD' || asset.role === 'OUTPUT')).map((asset) => asset.id);
+    const deletedAssetIds = assets.filter((asset) => !asset.purgedAt && (asset.role === 'UPLOAD' || asset.role === 'OUTPUT')).map((asset) => asset.id);
     await this.storage.deleteMany(assets.map(({ objectKey }) => objectKey));
-    const bytes = assets.filter((asset) => !asset.deletedAt && asset.role !== 'THUMBNAIL').reduce((sum, asset) => sum + asset.sizeBytes, 0n);
+    const bytes = assets.filter((asset) => !asset.purgedAt && asset.role !== 'THUMBNAIL').reduce((sum, asset) => sum + asset.sizeBytes, 0n);
     await this.prisma.$transaction(async (transaction) => {
       if (assetIds.length) await transaction.asset.deleteMany({ where: { id: { in: assetIds } } });
       await transaction.conversation.delete({ where: { id } });

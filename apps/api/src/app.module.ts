@@ -32,7 +32,7 @@ import { AssetLifecycleService } from './asset-lifecycle.service';
 import { PromptsController } from './prompts.controller';
 import { PromptPolishAdminController, PromptPolishController } from './prompt-polish.controller';
 import { PromptPolishService } from './prompt-polish.service';
-import { GroupsController } from './groups.controller';
+import { TeamsController } from './teams.controller';
 import { UsageController } from './usage.controller';
 import { OptionLabelsController } from './option-labels.controller';
 
@@ -40,7 +40,7 @@ const sharedProviders = [PrismaService, RedisService, RateLimitService, QuotaSer
 
 @Module({
   imports: [BullModule.forRoot({ connection: parseRedisUrl() }), BullModule.registerQueue({ name: 'image-generation' }), BullModule.registerQueue({ name: 'video-generation' })],
-  controllers: [HealthController, AuthController, AdminController, ProvidersController, ModelsController, GroupsController, UsageController, OptionLabelsController, AssetsController, ConversationsController, GenerationsController, PromptsController, PromptPolishAdminController, PromptPolishController],
+  controllers: [HealthController, AuthController, AdminController, ProvidersController, ModelsController, TeamsController, UsageController, OptionLabelsController, AssetsController, ConversationsController, GenerationsController, PromptsController, PromptPolishAdminController, PromptPolishController],
   providers: [...sharedProviders, GenerationProcessor, VideoGenerationProcessor, UploadAdmissionInterceptor, { provide: APP_GUARD, useClass: SessionGuard }],
 })
 export class AppModule {}
